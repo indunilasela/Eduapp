@@ -1,9 +1,14 @@
+// Load environment variables
+require('dotenv').config();
+
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const validator = require('validator');
+const crypto = require('crypto');
 const { initializeApp } = require('firebase/app');
 const { getFirestore, doc, setDoc, getDoc, query, collection, where, getDocs, connectFirestoreEmulator } = require('firebase/firestore');
+const { sendWelcomeEmail, sendPasswordResetEmail, testEmailConnection } = require('./emailService');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -134,6 +139,97 @@ async function createUser(userData) {
   }
 }
 
+// Password reset functions
+async function storePasswordResetToken(email, resetToken) {
+  try {
+    const tokenData = {
+      email: email.toLowerCase(),
+      resetToken,
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour from now
+      used: false
+    };
+    
+    const tokenId = `reset_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    await setDoc(doc(db, 'passwordResets', tokenId), tokenData);
+    
+    return { success: true, tokenId, message: 'Reset token stored successfully' };
+  } catch (error) {
+    console.error('❌ Error storing reset token:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function verifyPasswordResetToken(email, resetToken) {
+  try {
+    const resetQuery = query(
+      collection(db, 'passwordResets'),
+      where('email', '==', email.toLowerCase()),
+      where('resetToken', '==', resetToken),
+      where('used', '==', false)
+    );
+    
+    const querySnapshot = await getDocs(resetQuery);
+    
+    if (querySnapshot.empty) {
+      return { success: false, error: 'Invalid or expired reset token' };
+    }
+    
+    const resetDoc = querySnapshot.docs[0];
+    const resetData = resetDoc.data();
+    
+    // Check if token has expired
+    if (new Date() > resetData.expiresAt.toDate()) {
+      return { success: false, error: 'Reset token has expired' };
+    }
+    
+    return { 
+      success: true, 
+      tokenId: resetDoc.id,
+      resetData,
+      message: 'Reset token is valid' 
+    };
+  } catch (error) {
+    console.error('❌ Error verifying reset token:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function markResetTokenAsUsed(tokenId) {
+  try {
+    await setDoc(doc(db, 'passwordResets', tokenId), {
+      used: true,
+      usedAt: new Date()
+    }, { merge: true });
+    
+    return { success: true, message: 'Reset token marked as used' };
+  } catch (error) {
+    console.error('❌ Error marking token as used:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function updateUserPassword(email, newPassword) {
+  try {
+    const userResult = await findUserByEmail(email);
+    if (!userResult.success) {
+      return { success: false, error: 'User not found' };
+    }
+    
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    
+    await setDoc(doc(db, 'users', userResult.user.id), {
+      password: hashedPassword,
+      updatedAt: new Date()
+    }, { merge: true });
+    
+    return { success: true, message: 'Password updated successfully' };
+  } catch (error) {
+    console.error('❌ Error updating password:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // Validation functions
 function validateSignupData(username, email, password, confirmPassword) {
   const errors = [];
@@ -177,14 +273,58 @@ app.get('/', (req, res) => {
     message: 'Welcome to eduback backend!', 
     status: 'Server running',
     firebaseStatus: 'Connected (enable Firestore in Firebase Console if you see errors)',
+    emailStatus: 'Welcome emails enabled',
     timestamp: new Date().toISOString(),
     endpoints: {
-      signup: 'POST /auth/signup',
+      signup: 'POST /auth/signup (includes welcome email)',
       signin: 'POST /auth/signin',
+      forgotPassword: 'POST /auth/forgot-password',
+      resetPassword: 'POST /auth/reset-password',
       users: 'GET /users/:id',
+      testEmail: 'GET /test-email',
       firestoreSetup: 'Check FIREBASE_SETUP_GUIDE.md for Firestore setup'
     }
   });
+});
+
+// Test email connection endpoint
+app.get('/test-email', async (req, res) => {
+  try {
+    console.log('🔍 Testing email connection...');
+    const result = await testEmailConnection();
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Email server connection successful',
+        emailConfig: {
+          host: 'smtp.gmail.com',
+          port: 587,
+          secure: false,
+          from: '123456@asela@gmail.com'
+        },
+        status: 'Ready to send welcome emails'
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error,
+        message: 'Email server connection failed',
+        troubleshooting: [
+          'Check email credentials',
+          'Verify SMTP settings',
+          'Ensure less secure app access is enabled (for Gmail)',
+          'Check network connectivity'
+        ]
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Email test failed'
+    });
+  }
 });
 
 // Authentication Routes
@@ -250,15 +390,30 @@ app.post('/auth/signup', async (req, res) => {
         { expiresIn: '24h' }
       );
       
+      // Send welcome email (don't wait for it to complete)
+      console.log('📧 Sending welcome email...');
+      sendWelcomeEmail(userData.email, userData.username)
+        .then((emailResult) => {
+          if (emailResult.success) {
+            console.log('✅ Welcome email sent successfully to:', userData.email);
+          } else {
+            console.log('⚠️ Email sending failed but signup completed:', emailResult.message);
+          }
+        })
+        .catch((emailError) => {
+          console.error('⚠️ Email error (signup still successful):', emailError.message);
+        });
+      
       res.status(201).json({
         success: true,
-        message: 'User registered successfully',
+        message: 'User registered successfully! Welcome email sent.',
         user: {
           id: result.userId,
           username: userData.username,
           email: userData.email
         },
-        token
+        token,
+        emailStatus: 'Welcome email is being sent to your email address'
       });
     } else {
       res.status(500).json({
@@ -325,6 +480,133 @@ app.post('/auth/signin', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Signin error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Forgot Password endpoint
+app.post('/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    // Validate email
+    if (!email || !validator.isEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide a valid email address'
+      });
+    }
+    
+    // Check if user exists
+    const userResult = await findUserByEmail(email.toLowerCase());
+    if (!userResult.success) {
+      // For security, we don't reveal if email exists or not
+      return res.json({
+        success: true,
+        message: 'If an account with this email exists, you will receive a password reset email shortly.'
+      });
+    }
+    
+    // Generate reset token
+    const resetToken = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+    
+    // Store reset token in database
+    const storeResult = await storePasswordResetToken(email.toLowerCase(), resetToken);
+    if (!storeResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to generate password reset token'
+      });
+    }
+    
+    // Send password reset email
+    const emailResult = await sendPasswordResetEmail(
+      email.toLowerCase(),
+      userResult.user.username,
+      resetToken
+    );
+    
+    if (!emailResult.success) {
+      console.error('❌ Failed to send reset email:', emailResult.error);
+      // Even if email fails, we don't reveal this to the user for security
+    }
+    
+    res.json({
+      success: true,
+      message: 'If an account with this email exists, you will receive a password reset email shortly.'
+    });
+    
+  } catch (error) {
+    console.error('❌ Forgot password error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Reset Password endpoint
+app.post('/auth/reset-password', async (req, res) => {
+  try {
+    const { email, otp, newPassword, confirmPassword } = req.body;
+    
+    // Validate input
+    const errors = [];
+    
+    if (!email || !validator.isEmail(email)) {
+      errors.push('Please provide a valid email address');
+    }
+    
+    if (!otp || otp.trim().length !== 6 || !/^\d{6}$/.test(otp.trim())) {
+      errors.push('Please provide a valid 6-digit verification code');
+    }
+    
+    if (!newPassword || newPassword.length < 6) {
+      errors.push('New password must be at least 6 characters long');
+    }
+    
+    if (newPassword !== confirmPassword) {
+      errors.push('Passwords do not match');
+    }
+    
+    if (errors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        errors
+      });
+    }
+    
+    // Verify reset token (OTP)
+    const tokenResult = await verifyPasswordResetToken(email.toLowerCase(), otp.trim());
+    if (!tokenResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: tokenResult.error
+      });
+    }
+    
+    // Update user password
+    const updateResult = await updateUserPassword(email.toLowerCase(), newPassword);
+    if (!updateResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to update password'
+      });
+    }
+    
+    // Mark token as used
+    await markResetTokenAsUsed(tokenResult.tokenId);
+    
+    res.json({
+      success: true,
+      message: 'Password has been reset successfully. You can now sign in with your new password.'
+    });
+    
+  } catch (error) {
+    console.error('❌ Reset password error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
