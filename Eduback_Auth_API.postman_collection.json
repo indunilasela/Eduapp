@@ -1,0 +1,207 @@
+{
+  "info": {
+    "name": "Eduback Authentication API",
+    "description": "Complete authentication API testing collection for signup and signin",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get API Info",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseURL}}/",
+          "host": ["{{baseURL}}"],
+          "path": [""]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Signup - Valid User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"username\": \"testuser123\",\n    \"email\": \"test@example.com\",\n    \"password\": \"password123\",\n    \"confirmPassword\": \"password123\"\n}"
+        },
+        "url": {
+          "raw": "{{baseURL}}/auth/signup",
+          "host": ["{{baseURL}}"],
+          "path": ["auth", "signup"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 201\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "",
+              "pm.test(\"Response has success true\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.eql(true);",
+              "});",
+              "",
+              "pm.test(\"Response has token\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.token).to.exist;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "Signup - Invalid Email",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"username\": \"testuser\",\n    \"email\": \"invalid-email\",\n    \"password\": \"password123\",\n    \"confirmPassword\": \"password123\"\n}"
+        },
+        "url": {
+          "raw": "{{baseURL}}/auth/signup",
+          "host": ["{{baseURL}}"],
+          "path": ["auth", "signup"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Signup - Password Mismatch",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"username\": \"testuser\",\n    \"email\": \"test2@example.com\",\n    \"password\": \"password123\",\n    \"confirmPassword\": \"differentpassword\"\n}"
+        },
+        "url": {
+          "raw": "{{baseURL}}/auth/signup",
+          "host": ["{{baseURL}}"],
+          "path": ["auth", "signup"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Signin - Valid Credentials",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"email\": \"test@example.com\",\n    \"password\": \"password123\"\n}"
+        },
+        "url": {
+          "raw": "{{baseURL}}/auth/signin",
+          "host": ["{{baseURL}}"],
+          "path": ["auth", "signin"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Response has success true\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.eql(true);",
+              "});",
+              "",
+              "pm.test(\"Response has token\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.token).to.exist;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "Signin - Invalid Email",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"email\": \"nonexistent@example.com\",\n    \"password\": \"password123\"\n}"
+        },
+        "url": {
+          "raw": "{{baseURL}}/auth/signin",
+          "host": ["{{baseURL}}"],
+          "path": ["auth", "signin"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Signin - Wrong Password",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"email\": \"test@example.com\",\n    \"password\": \"wrongpassword\"\n}"
+        },
+        "url": {
+          "raw": "{{baseURL}}/auth/signin",
+          "host": ["{{baseURL}}"],
+          "path": ["auth", "signin"]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseURL",
+      "value": "http://localhost:4000",
+      "type": "string"
+    }
+  ]
+}
