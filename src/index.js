@@ -230,6 +230,75 @@ async function updateUserPassword(email, newPassword) {
   }
 }
 
+// OTP verification tracking functions
+async function storeOTPVerification(email, resetToken) {
+  try {
+    const verificationData = {
+      email: email.toLowerCase(),
+      resetToken,
+      verified: true,
+      verifiedAt: new Date(),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes to complete password reset
+    };
+    
+    const verificationId = `verified_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    await setDoc(doc(db, 'otpVerifications', verificationId), verificationData);
+    
+    return { success: true, verificationId, message: 'OTP verification stored successfully' };
+  } catch (error) {
+    console.error('❌ Error storing OTP verification:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function checkOTPVerification(email) {
+  try {
+    const verificationQuery = query(
+      collection(db, 'otpVerifications'),
+      where('email', '==', email.toLowerCase()),
+      where('verified', '==', true)
+    );
+    
+    const querySnapshot = await getDocs(verificationQuery);
+    
+    if (querySnapshot.empty) {
+      return { success: false, error: 'OTP not verified or expired' };
+    }
+    
+    const verificationDoc = querySnapshot.docs[0];
+    const verificationData = verificationDoc.data();
+    
+    // Check if verification has expired (10 minutes)
+    if (new Date() > verificationData.expiresAt.toDate()) {
+      return { success: false, error: 'OTP verification has expired. Please verify OTP again.' };
+    }
+    
+    return { 
+      success: true, 
+      verificationId: verificationDoc.id,
+      verificationData,
+      message: 'OTP verification is valid' 
+    };
+  } catch (error) {
+    console.error('❌ Error checking OTP verification:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function clearOTPVerification(verificationId) {
+  try {
+    await setDoc(doc(db, 'otpVerifications', verificationId), {
+      used: true,
+      usedAt: new Date()
+    }, { merge: true });
+    
+    return { success: true, message: 'OTP verification cleared' };
+  } catch (error) {
+    console.error('❌ Error clearing OTP verification:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // Validation functions
 function validateSignupData(username, email, password, confirmPassword) {
   const errors = [];
@@ -279,7 +348,8 @@ app.get('/', (req, res) => {
       signup: 'POST /auth/signup (includes welcome email)',
       signin: 'POST /auth/signin',
       forgotPassword: 'POST /auth/forgot-password',
-      resetPassword: 'POST /auth/reset-password',
+      verifyOTP: 'POST /auth/verify-otp (Step 1: Verify OTP)',
+      resetPassword: 'POST /auth/reset-password (Step 2: Set new password)',
       users: 'GET /users/:id',
       testEmail: 'GET /test-email',
       firestoreSetup: 'Check FIREBASE_SETUP_GUIDE.md for Firestore setup'
@@ -548,10 +618,10 @@ app.post('/auth/forgot-password', async (req, res) => {
   }
 });
 
-// Reset Password endpoint
-app.post('/auth/reset-password', async (req, res) => {
+// Verify OTP endpoint (Step 1)
+app.post('/auth/verify-otp', async (req, res) => {
   try {
-    const { email, otp, newPassword, confirmPassword } = req.body;
+    const { email, otp } = req.body;
     
     // Validate input
     const errors = [];
@@ -562,14 +632,6 @@ app.post('/auth/reset-password', async (req, res) => {
     
     if (!otp || otp.trim().length !== 6 || !/^\d{6}$/.test(otp.trim())) {
       errors.push('Please provide a valid 6-digit verification code');
-    }
-    
-    if (!newPassword || newPassword.length < 6) {
-      errors.push('New password must be at least 6 characters long');
-    }
-    
-    if (newPassword !== confirmPassword) {
-      errors.push('Passwords do not match');
     }
     
     if (errors.length > 0) {
@@ -588,6 +650,69 @@ app.post('/auth/reset-password', async (req, res) => {
       });
     }
     
+    // Store OTP verification for next step
+    const verificationResult = await storeOTPVerification(email.toLowerCase(), otp.trim());
+    if (!verificationResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to verify OTP'
+      });
+    }
+    
+    // Mark original reset token as used
+    await markResetTokenAsUsed(tokenResult.tokenId);
+    
+    res.json({
+      success: true,
+      message: 'OTP verified successfully. You can now set your new password.',
+      nextStep: 'Please provide your new password'
+    });
+    
+  } catch (error) {
+    console.error('❌ Verify OTP error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Reset Password endpoint (Step 2)
+app.post('/auth/reset-password', async (req, res) => {
+  try {
+    const { email, newPassword, confirmPassword } = req.body;
+    
+    // Validate input
+    const errors = [];
+    
+    if (!email || !validator.isEmail(email)) {
+      errors.push('Please provide a valid email address');
+    }
+    
+    if (!newPassword || newPassword.length < 6) {
+      errors.push('New password must be at least 6 characters long');
+    }
+    
+    if (newPassword !== confirmPassword) {
+      errors.push('Passwords do not match');
+    }
+    
+    if (errors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        errors
+      });
+    }
+    
+    // Check if OTP was verified (Step 1 completed)
+    const verificationResult = await checkOTPVerification(email.toLowerCase());
+    if (!verificationResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: verificationResult.error
+      });
+    }
+    
     // Update user password
     const updateResult = await updateUserPassword(email.toLowerCase(), newPassword);
     if (!updateResult.success) {
@@ -597,8 +722,8 @@ app.post('/auth/reset-password', async (req, res) => {
       });
     }
     
-    // Mark token as used
-    await markResetTokenAsUsed(tokenResult.tokenId);
+    // Clear OTP verification
+    await clearOTPVerification(verificationResult.verificationId);
     
     res.json({
       success: true,
