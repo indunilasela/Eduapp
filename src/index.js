@@ -6,6 +6,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const validator = require('validator');
 const crypto = require('crypto');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { initializeApp } = require('firebase/app');
 const { getFirestore, doc, setDoc, getDoc, query, collection, where, getDocs, connectFirestoreEmulator } = require('firebase/firestore');
 const { sendWelcomeEmail, sendPasswordResetEmail, testEmailConnection } = require('./emailService');
@@ -18,6 +21,70 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-pro
 
 // Add middleware for JSON parsing
 app.use(express.json());
+
+// Serve static files from uploads directory
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadPath = path.join(__dirname, '../uploads/profile-images');
+    // Ensure directory exists
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: function (req, file, cb) {
+    // Create unique filename with timestamp and random string
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const extension = path.extname(file.originalname);
+    cb(null, 'profile-' + uniqueSuffix + extension);
+  }
+});
+
+// File filter for images only
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only image files (JPEG, PNG, GIF, WebP) are allowed'), false);
+  }
+};
+
+// Multer upload configuration
+const upload = multer({
+  storage: storage,
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  }
+});
+
+// JWT Authentication middleware
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Access token required' 
+    });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Invalid or expired token' 
+      });
+    }
+    req.user = user;
+    next();
+  });
+}
 
 const firebaseConfig = {
   apiKey: "AIzaSyDZYyoUJnEjkjueiwM3LQxsvDwlMp3O8hM",
@@ -230,6 +297,49 @@ async function updateUserPassword(email, newPassword) {
   }
 }
 
+// Profile image utility functions
+async function updateUserProfileImage(userId, imagePath) {
+  try {
+    await setDoc(doc(db, 'users', userId), {
+      profileImage: imagePath,
+      updatedAt: new Date()
+    }, { merge: true });
+    
+    return { success: true, message: 'Profile image updated successfully' };
+  } catch (error) {
+    console.error('❌ Error updating profile image:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function deleteUserProfileImage(userId) {
+  try {
+    await setDoc(doc(db, 'users', userId), {
+      profileImage: null,
+      updatedAt: new Date()
+    }, { merge: true });
+    
+    return { success: true, message: 'Profile image deleted successfully' };
+  } catch (error) {
+    console.error('❌ Error deleting profile image:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Helper function to delete file from filesystem
+function deleteFileFromSystem(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('❌ Error deleting file:', error);
+    return false;
+  }
+}
+
 // OTP verification tracking functions
 async function storeOTPVerification(email, resetToken) {
   try {
@@ -350,6 +460,11 @@ app.get('/', (req, res) => {
       forgotPassword: 'POST /auth/forgot-password',
       verifyOTP: 'POST /auth/verify-otp (Step 1: Verify OTP)',
       resetPassword: 'POST /auth/reset-password (Step 2: Set new password)',
+      username: 'GET /auth/username (protected - requires Bearer token)',
+      profileImageUpload: 'POST /auth/profile-image/upload (protected - multipart/form-data)',
+      profileImageUpdate: 'PUT /auth/profile-image/update (protected - multipart/form-data)',
+      profileImageDelete: 'DELETE /auth/profile-image/delete (protected)',
+      profileImageGet: 'GET /auth/profile-image (protected)',
       users: 'GET /users/:id',
       testEmail: 'GET /test-email',
       firestoreSetup: 'Check FIREBASE_SETUP_GUIDE.md for Firestore setup'
@@ -815,6 +930,221 @@ app.get('/users/:id', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+});
+
+// Get username only endpoint (protected)
+app.get('/auth/username', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await readUserData(userId);
+    
+    if (result.success) {
+      const userData = result.data;
+      res.json({
+        success: true,
+        username: userData.username || userData.firstName || 'User'
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Profile Image Upload endpoint
+app.post('/auth/profile-image/upload', authenticateToken, upload.single('profileImage'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No image file provided'
+      });
+    }
+
+    const userId = req.user.userId;
+    const imagePath = `/uploads/profile-images/${req.file.filename}`;
+
+    // Get current user data to check for existing profile image
+    const currentUser = await readUserData(userId);
+    if (currentUser.success && currentUser.data.profileImage) {
+      // Delete old profile image
+      const oldImagePath = path.join(__dirname, '../', currentUser.data.profileImage);
+      deleteFileFromSystem(oldImagePath);
+    }
+
+    // Update user profile image in database
+    const updateResult = await updateUserProfileImage(userId, imagePath);
+    
+    if (updateResult.success) {
+      res.json({
+        success: true,
+        message: 'Profile image uploaded successfully',
+        profileImage: imagePath,
+        imageUrl: `http://localhost:${PORT}${imagePath}`
+      });
+    } else {
+      // Delete uploaded file if database update failed
+      deleteFileFromSystem(req.file.path);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to save profile image'
+      });
+    }
+  } catch (error) {
+    // Delete uploaded file if error occurred
+    if (req.file) {
+      deleteFileFromSystem(req.file.path);
+    }
+    console.error('❌ Profile image upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Profile Image Update/Edit endpoint
+app.put('/auth/profile-image/update', authenticateToken, upload.single('profileImage'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No image file provided'
+      });
+    }
+
+    const userId = req.user.userId;
+    const imagePath = `/uploads/profile-images/${req.file.filename}`;
+
+    // Get current user data to delete old image
+    const currentUser = await readUserData(userId);
+    if (currentUser.success && currentUser.data.profileImage) {
+      // Delete old profile image
+      const oldImagePath = path.join(__dirname, '../', currentUser.data.profileImage);
+      deleteFileFromSystem(oldImagePath);
+    }
+
+    // Update user profile image in database
+    const updateResult = await updateUserProfileImage(userId, imagePath);
+    
+    if (updateResult.success) {
+      res.json({
+        success: true,
+        message: 'Profile image updated successfully',
+        profileImage: imagePath,
+        imageUrl: `http://localhost:${PORT}${imagePath}`
+      });
+    } else {
+      // Delete uploaded file if database update failed
+      deleteFileFromSystem(req.file.path);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to update profile image'
+      });
+    }
+  } catch (error) {
+    // Delete uploaded file if error occurred
+    if (req.file) {
+      deleteFileFromSystem(req.file.path);
+    }
+    console.error('❌ Profile image update error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Profile Image Delete endpoint
+app.delete('/auth/profile-image/delete', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Get current user data to find image path
+    const currentUser = await readUserData(userId);
+    if (!currentUser.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    if (!currentUser.data.profileImage) {
+      return res.status(400).json({
+        success: false,
+        error: 'No profile image to delete'
+      });
+    }
+
+    // Delete image from filesystem
+    const imagePath = path.join(__dirname, '../', currentUser.data.profileImage);
+    const fileDeleted = deleteFileFromSystem(imagePath);
+
+    // Remove profile image from database
+    const updateResult = await deleteUserProfileImage(userId);
+    
+    if (updateResult.success) {
+      res.json({
+        success: true,
+        message: 'Profile image deleted successfully',
+        fileDeleted: fileDeleted
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to delete profile image from database'
+      });
+    }
+  } catch (error) {
+    console.error('❌ Profile image delete error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get Profile Image endpoint
+app.get('/auth/profile-image', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Get current user data
+    const currentUser = await readUserData(userId);
+    if (!currentUser.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    if (!currentUser.data.profileImage) {
+      return res.json({
+        success: true,
+        profileImage: null,
+        message: 'No profile image set'
+      });
+    }
+
+    res.json({
+      success: true,
+      profileImage: currentUser.data.profileImage,
+      imageUrl: `http://localhost:${PORT}${currentUser.data.profileImage}`
+    });
+  } catch (error) {
+    console.error('❌ Get profile image error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
     });
   }
 });
