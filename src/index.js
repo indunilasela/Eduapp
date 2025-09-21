@@ -10,7 +10,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { initializeApp } = require('firebase/app');
-const { getFirestore, doc, setDoc, getDoc, query, collection, where, getDocs, connectFirestoreEmulator } = require('firebase/firestore');
+const { getFirestore, doc, setDoc, getDoc, query, collection, where, getDocs, deleteDoc, connectFirestoreEmulator } = require('firebase/firestore');
 const { sendWelcomeEmail, sendPasswordResetEmail, testEmailConnection } = require('./emailService');
 
 const app = express();
@@ -1156,6 +1156,368 @@ app.get('/auth/profile-image', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Get profile image error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Admin middleware - only allows admin user (i.asela016@gmail.com)
+async function isAdmin(req, res, next) {
+  try {
+    const userId = req.user.userId;
+    const userData = await readUserData(userId);
+    
+    if (!userData.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Check if user is admin
+    if (userData.data.email !== 'i.asela016@gmail.com') {
+      return res.status(403).json({
+        success: false,
+        error: 'Admin access required'
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('❌ Admin verification error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+}
+
+// Subject utility functions
+async function createSubject(subjectData) {
+  try {
+    const subjectId = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
+    await setDoc(doc(db, 'subjects', subjectId), {
+      ...subjectData,
+      id: subjectId,
+      status: 'pending', // pending, approved, rejected
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+    return { success: true, subjectId, message: 'Subject created successfully' };
+  } catch (error) {
+    console.error('❌ Error creating subject:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getSubjects(status = null, userId = null) {
+  try {
+    const subjectsRef = collection(db, 'subjects');
+    let q;
+    
+    if (status && userId) {
+      // For getting user's own subjects regardless of status
+      q = query(subjectsRef, where('userId', '==', userId));
+    } else if (status) {
+      // For getting subjects by status (e.g., approved subjects for all users)
+      q = query(subjectsRef, where('status', '==', status));
+    } else {
+      // For admin to get all subjects
+      q = query(subjectsRef);
+    }
+    
+    const querySnapshot = await getDocs(q);
+    const subjects = [];
+    
+    querySnapshot.forEach((doc) => {
+      subjects.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    return { success: true, subjects };
+  } catch (error) {
+    console.error('❌ Error fetching subjects:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function updateSubjectStatus(subjectId, status, adminId) {
+  try {
+    const subjectRef = doc(db, 'subjects', subjectId);
+    await setDoc(subjectRef, {
+      status: status,
+      approvedBy: adminId,
+      approvedAt: new Date(),
+      updatedAt: new Date()
+    }, { merge: true });
+    
+    return { success: true, message: `Subject ${status} successfully` };
+  } catch (error) {
+    console.error('❌ Error updating subject status:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function deleteSubject(subjectId) {
+  try {
+    await deleteDoc(doc(db, 'subjects', subjectId));
+    return { success: true, message: 'Subject deleted successfully' };
+  } catch (error) {
+    console.error('❌ Error deleting subject:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// ===============================
+// SUBJECT MANAGEMENT ENDPOINTS
+// ===============================
+
+// Create Subject endpoint
+app.post('/subjects/create', authenticateToken, async (req, res) => {
+  try {
+    const { subject, grade, school, description } = req.body;
+    const userId = req.user.userId;
+
+    // Validation
+    if (!subject || !grade) {
+      return res.status(400).json({
+        success: false,
+        error: 'Subject and grade are required'
+      });
+    }
+
+    // Get user data for creator info
+    const userData = await readUserData(userId);
+    if (!userData.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const subjectData = {
+      subject: subject.trim(),
+      grade: grade.trim(),
+      school: school ? school.trim() : null,
+      description: description ? description.trim() : null,
+      userId: userId,
+      creatorEmail: userData.data.email,
+      creatorUsername: userData.data.username || userData.data.email
+    };
+
+    const result = await createSubject(subjectData);
+
+    if (result.success) {
+      res.status(201).json({
+        success: true,
+        message: 'Subject created successfully and pending admin approval',
+        subjectId: result.subjectId,
+        data: {
+          ...subjectData,
+          id: result.subjectId,
+          status: 'pending'
+        }
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Create subject error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get approved subjects (for all users)
+app.get('/subjects', async (req, res) => {
+  try {
+    const result = await getSubjects('approved');
+
+    if (result.success) {
+      res.json({
+        success: true,
+        subjects: result.subjects,
+        count: result.subjects.length
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get subjects error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get user's own subjects (all statuses)
+app.get('/subjects/my', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await getSubjects(null, userId);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        subjects: result.subjects,
+        count: result.subjects.length
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get my subjects error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get pending subjects (admin only)
+app.get('/admin/subjects/pending', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const result = await getSubjects('pending');
+
+    if (result.success) {
+      res.json({
+        success: true,
+        subjects: result.subjects,
+        count: result.subjects.length
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get pending subjects error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get all subjects (admin only)
+app.get('/admin/subjects', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const result = await getSubjects(); // Get all subjects regardless of status
+
+    if (result.success) {
+      res.json({
+        success: true,
+        subjects: result.subjects,
+        count: result.subjects.length
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get all subjects error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Approve subject (admin only)
+app.put('/admin/subjects/:id/approve', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const subjectId = req.params.id;
+    const adminId = req.user.userId;
+
+    const result = await updateSubjectStatus(subjectId, 'approved', adminId);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Approve subject error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Reject subject (admin only)
+app.put('/admin/subjects/:id/reject', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const subjectId = req.params.id;
+    const adminId = req.user.userId;
+
+    const result = await updateSubjectStatus(subjectId, 'rejected', adminId);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Reject subject error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete subject (admin only)
+app.delete('/admin/subjects/:id', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const subjectId = req.params.id;
+
+    const result = await deleteSubject(subjectId);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Delete subject error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
