@@ -22,6 +22,20 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-pro
 // Add middleware for JSON parsing
 app.use(express.json());
 
+// Enable CORS for all routes (for mobile app access)
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
 // Serve static files from uploads directory
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
@@ -1149,8 +1163,9 @@ app.get('/auth/profile-image', authenticateToken, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server running on port ${PORT}`);
-  console.log(`🌐 Visit http://localhost:${PORT} to test the connection`);
+  console.log(`🌐 Network accessible at http://0.0.0.0:${PORT}`);
+  console.log(`🌐 Local access at http://localhost:${PORT}`);
   console.log(`🔥 Firebase connection ready`);
 });
