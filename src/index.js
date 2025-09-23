@@ -76,6 +76,43 @@ const upload = multer({
   }
 });
 
+// PDF storage configuration for papers
+const pdfStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadPath = path.join(__dirname, '../uploads/papers');
+    // Ensure directory exists
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: function (req, file, cb) {
+    // Create unique filename with timestamp and random string
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const extension = path.extname(file.originalname);
+    cb(null, 'paper-' + uniqueSuffix + extension);
+  }
+});
+
+// File filter for PDFs only
+const pdfFileFilter = (req, file, cb) => {
+  const allowedTypes = ['application/pdf'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only PDF files are allowed'), false);
+  }
+};
+
+// Multer upload configuration for PDFs
+const uploadPDF = multer({
+  storage: pdfStorage,
+  fileFilter: pdfFileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit for PDFs
+  }
+});
+
 // JWT Authentication middleware
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -1272,6 +1309,94 @@ async function deleteSubject(subjectId) {
   }
 }
 
+// Paper utility functions
+async function createPaper(paperData) {
+  try {
+    const paperId = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
+    await setDoc(doc(db, 'papers', paperId), {
+      ...paperData,
+      id: paperId,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+    return { success: true, paperId, message: 'Paper uploaded successfully' };
+  } catch (error) {
+    console.error('❌ Error creating paper:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getPapers(subjectId, type = null) {
+  try {
+    const papersRef = collection(db, 'papers');
+    let q;
+    
+    if (type) {
+      // Filter by subject and type
+      q = query(papersRef, where('subjectId', '==', subjectId), where('type', '==', type));
+    } else {
+      // Get all papers for subject
+      q = query(papersRef, where('subjectId', '==', subjectId));
+    }
+    
+    const querySnapshot = await getDocs(q);
+    const papers = [];
+    
+    querySnapshot.forEach((doc) => {
+      papers.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    return { success: true, papers };
+  } catch (error) {
+    console.error('❌ Error fetching papers:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function deletePaper(paperId) {
+  try {
+    // Get paper data first to delete file
+    const paperDoc = await getDoc(doc(db, 'papers', paperId));
+    if (paperDoc.exists()) {
+      const paperData = paperDoc.data();
+      
+      // Delete file from filesystem
+      if (paperData.filePath) {
+        const fullPath = path.join(__dirname, '..', paperData.filePath);
+        if (fs.existsSync(fullPath)) {
+          fs.unlinkSync(fullPath);
+        }
+      }
+      
+      // Delete from database
+      await deleteDoc(doc(db, 'papers', paperId));
+      return { success: true, message: 'Paper deleted successfully' };
+    } else {
+      return { success: false, error: 'Paper not found' };
+    }
+  } catch (error) {
+    console.error('❌ Error deleting paper:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getPaperById(paperId) {
+  try {
+    const docSnap = await getDoc(doc(db, 'papers', paperId));
+    if (docSnap.exists()) {
+      return { success: true, data: docSnap.data() };
+    } else {
+      return { success: false, message: 'Paper not found' };
+    }
+  } catch (error) {
+    console.error('❌ Error reading paper data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // ===============================
 // SUBJECT MANAGEMENT ENDPOINTS
 // ===============================
@@ -1518,6 +1643,329 @@ app.delete('/admin/subjects/:id', authenticateToken, isAdmin, async (req, res) =
     }
   } catch (error) {
     console.error('❌ Delete subject error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ===============================
+// PAPER MANAGEMENT ENDPOINTS
+// ===============================
+
+// Upload Paper endpoint
+app.post('/subjects/:subjectId/papers/upload', authenticateToken, uploadPDF.single('paperFile'), async (req, res) => {
+  try {
+    const { subjectId } = req.params;
+    const { type, name, year, title } = req.body;
+    const userId = req.user.userId;
+
+    // Validation
+    if (!type || !name || !year) {
+      return res.status(400).json({
+        success: false,
+        error: 'Type, name, and year are required'
+      });
+    }
+
+    if (!['past paper', 'model paper'].includes(type.toLowerCase())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Type must be either "past paper" or "model paper"'
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'PDF file is required'
+      });
+    }
+
+    // Get user data for uploader info
+    const userData = await readUserData(userId);
+    if (!userData.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Verify subject exists
+    const subjectData = await getDoc(doc(db, 'subjects', subjectId));
+    if (!subjectData.exists()) {
+      // Delete uploaded file if subject doesn't exist
+      fs.unlinkSync(req.file.path);
+      return res.status(404).json({
+        success: false,
+        error: 'Subject not found'
+      });
+    }
+
+    const paperData = {
+      subjectId: subjectId,
+      type: type.toLowerCase(),
+      name: name.trim(),
+      year: year.trim(),
+      title: title ? title.trim() : null,
+      fileName: req.file.filename,
+      originalName: req.file.originalname,
+      filePath: `/uploads/papers/${req.file.filename}`,
+      fileSize: req.file.size,
+      uploaderId: userId,
+      uploaderEmail: userData.data.email,
+      uploaderUsername: userData.data.username || userData.data.email
+    };
+
+    const result = await createPaper(paperData);
+
+    if (result.success) {
+      res.status(201).json({
+        success: true,
+        message: 'Paper uploaded successfully',
+        paperId: result.paperId,
+        data: {
+          ...paperData,
+          id: result.paperId
+        }
+      });
+    } else {
+      // Delete uploaded file if database save failed
+      fs.unlinkSync(req.file.path);
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    // Delete uploaded file if any error occurs
+    if (req.file) {
+      fs.unlinkSync(req.file.path);
+    }
+    console.error('❌ Upload paper error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get Papers for Subject endpoint
+app.get('/subjects/:subjectId/papers', async (req, res) => {
+  try {
+    const { subjectId } = req.params;
+    const { type } = req.query; // Optional filter by type
+
+    const result = await getPapers(subjectId, type);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        papers: result.papers,
+        count: result.papers.length
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get papers error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get Past Papers for Subject endpoint
+app.get('/subjects/:subjectId/papers/past', async (req, res) => {
+  try {
+    const { subjectId } = req.params;
+    const result = await getPapers(subjectId, 'past paper');
+
+    if (result.success) {
+      res.json({
+        success: true,
+        papers: result.papers,
+        count: result.papers.length
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get past papers error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get Model Papers for Subject endpoint
+app.get('/subjects/:subjectId/papers/model', async (req, res) => {
+  try {
+    const { subjectId } = req.params;
+    const result = await getPapers(subjectId, 'model paper');
+
+    if (result.success) {
+      res.json({
+        success: true,
+        papers: result.papers,
+        count: result.papers.length
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get model papers error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Download Paper endpoint
+app.get('/papers/:paperId/download', async (req, res) => {
+  try {
+    const { paperId } = req.params;
+    
+    const paperResult = await getPaperById(paperId);
+    if (!paperResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Paper not found'
+      });
+    }
+
+    const paper = paperResult.data;
+    const filePath = path.join(__dirname, '..', paper.filePath);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'File not found'
+      });
+    }
+
+    // Set headers for PDF download
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${paper.originalName}"`);
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+  } catch (error) {
+    console.error('❌ Download paper error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// View Paper endpoint (for viewing in browser)
+app.get('/papers/:paperId/view', async (req, res) => {
+  try {
+    const { paperId } = req.params;
+    
+    const paperResult = await getPaperById(paperId);
+    if (!paperResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Paper not found'
+      });
+    }
+
+    const paper = paperResult.data;
+    const filePath = path.join(__dirname, '..', paper.filePath);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'File not found'
+      });
+    }
+
+    // Set headers for PDF viewing
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${paper.originalName}"`);
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+  } catch (error) {
+    console.error('❌ View paper error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete Paper endpoint (Admin and uploader only)
+app.delete('/papers/:paperId', authenticateToken, async (req, res) => {
+  try {
+    const { paperId } = req.params;
+    const userId = req.user.userId;
+
+    // Get paper data to check permissions
+    const paperResult = await getPaperById(paperId);
+    if (!paperResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Paper not found'
+      });
+    }
+
+    const paper = paperResult.data;
+    
+    // Get user data to check if admin
+    const userData = await readUserData(userId);
+    if (!userData.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Check if user is admin or the uploader
+    const isAdmin = userData.data.email === 'i.asela016@gmail.com';
+    const isUploader = paper.uploaderId === userId;
+
+    if (!isAdmin && !isUploader) {
+      return res.status(403).json({
+        success: false,
+        error: 'Only admin or the uploader can delete this paper'
+      });
+    }
+
+    const result = await deletePaper(paperId);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Delete paper error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'

@@ -1,0 +1,601 @@
+{
+	"info": {
+		"_postman_id": "paper-mgmt-001",
+		"name": "EduApp Paper Management API",
+		"description": "Complete collection for testing EduApp paper management endpoints including upload, view, download, and delete operations",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Paper Upload",
+			"item": [
+				{
+					"name": "Upload Past Paper",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    if (response.success && response.paperId) {",
+									"        pm.environment.set('paperId', response.paperId);",
+									"        console.log('Paper ID saved:', response.paperId);",
+									"    }",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "paperFile",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "type",
+									"value": "past paper",
+									"type": "text"
+								},
+								{
+									"key": "name",
+									"value": "Mathematics O/L",
+									"type": "text"
+								},
+								{
+									"key": "year",
+									"value": "2024",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers/upload",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers", "upload"]
+						}
+					}
+				},
+				{
+					"name": "Upload Model Paper",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    if (response.success && response.paperId) {",
+									"        pm.environment.set('modelPaperId', response.paperId);",
+									"        console.log('Model Paper ID saved:', response.paperId);",
+									"    }",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "paperFile",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "type",
+									"value": "model paper",
+									"type": "text"
+								},
+								{
+									"key": "name",
+									"value": "Physics A/L",
+									"type": "text"
+								},
+								{
+									"key": "year",
+									"value": "2025",
+									"type": "text"
+								},
+								{
+									"key": "title",
+									"value": "Amila Dasanayaka create paper part 1",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers/upload",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers", "upload"]
+						}
+					}
+				},
+				{
+					"name": "Upload Invalid File Type (Should Fail)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "paperFile",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "type",
+									"value": "past paper",
+									"type": "text"
+								},
+								{
+									"key": "name",
+									"value": "Test Paper",
+									"type": "text"
+								},
+								{
+									"key": "year",
+									"value": "2025",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers/upload",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers", "upload"]
+						}
+					}
+				},
+				{
+					"name": "Upload Without Required Fields (Should Fail)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "paperFile",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "type",
+									"value": "past paper",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers/upload",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers", "upload"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Paper Viewing",
+			"item": [
+				{
+					"name": "Get All Papers for Subject",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers"]
+						}
+					}
+				},
+				{
+					"name": "Get Past Papers Only",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers/past",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers", "past"]
+						}
+					}
+				},
+				{
+					"name": "Get Model Papers Only",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers/model",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers", "model"]
+						}
+					}
+				},
+				{
+					"name": "Filter Papers by Type (Query Parameter)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers?type=past paper",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers"],
+							"query": [
+								{
+									"key": "type",
+									"value": "past paper"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Paper Download & View",
+			"item": [
+				{
+					"name": "Download Paper",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/papers/{{paperId}}/download",
+							"host": ["{{baseUrl}}"],
+							"path": ["papers", "{{paperId}}", "download"]
+						}
+					}
+				},
+				{
+					"name": "View Paper in Browser",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/papers/{{paperId}}/view",
+							"host": ["{{baseUrl}}"],
+							"path": ["papers", "{{paperId}}", "view"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Paper Management",
+			"item": [
+				{
+					"name": "Delete Own Paper",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/papers/{{paperId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["papers", "{{paperId}}"]
+						}
+					}
+				},
+				{
+					"name": "Admin Delete Any Paper",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/papers/{{paperId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["papers", "{{paperId}}"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Security Tests",
+			"item": [
+				{
+					"name": "Upload Without Authentication (Should Fail)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "paperFile",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "type",
+									"value": "past paper",
+									"type": "text"
+								},
+								{
+									"key": "name",
+									"value": "Test Paper",
+									"type": "text"
+								},
+								{
+									"key": "year",
+									"value": "2025",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers/upload",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers", "upload"]
+						}
+					}
+				},
+				{
+					"name": "Delete Other User's Paper (Should Fail)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/papers/{{otherUserPaperId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["papers", "{{otherUserPaperId}}"]
+						}
+					}
+				},
+				{
+					"name": "Delete Without Authentication (Should Fail)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/papers/{{paperId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["papers", "{{paperId}}"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Sample Test Data",
+			"item": [
+				{
+					"name": "Upload English O/L Past Paper 2024",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "paperFile",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "type",
+									"value": "past paper",
+									"type": "text"
+								},
+								{
+									"key": "name",
+									"value": "English O/L",
+									"type": "text"
+								},
+								{
+									"key": "year",
+									"value": "2024",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers/upload",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers", "upload"]
+						}
+					}
+				},
+				{
+					"name": "Upload Chemistry A/L Model Paper 2025",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "paperFile",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "type",
+									"value": "model paper",
+									"type": "text"
+								},
+								{
+									"key": "name",
+									"value": "Chemistry A/L",
+									"type": "text"
+								},
+								{
+									"key": "year",
+									"value": "2025",
+									"type": "text"
+								},
+								{
+									"key": "title",
+									"value": "Teacher Created Practice Test",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers/upload",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers", "upload"]
+						}
+					}
+				},
+				{
+					"name": "Upload Biology O/L Past Paper 2023",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "paperFile",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "type",
+									"value": "past paper",
+									"type": "text"
+								},
+								{
+									"key": "name",
+									"value": "Biology O/L",
+									"type": "text"
+								},
+								{
+									"key": "year",
+									"value": "2023",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/{{subjectId}}/papers/upload",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "{{subjectId}}", "papers", "upload"]
+						}
+					}
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:4000",
+			"type": "string"
+		},
+		{
+			"key": "authToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "adminToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "subjectId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "paperId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "modelPaperId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "otherUserPaperId",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

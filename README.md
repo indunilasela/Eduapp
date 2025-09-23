@@ -1,6 +1,6 @@
 # EduApp Backend API
 
-A Node.js Express backend with Firebase Firestore integration for user authentication, profile management, and subject management with admin approval system.
+A Node.js Express backend with Firebase Firestore integration for user authentication, profile management, subject management with admin approval system, and paper management.
 
 ## 🚀 Features
 
@@ -9,8 +9,10 @@ A Node.js Express backend with Firebase Firestore integration for user authentic
 - **Firebase Integration**: Firestore database for user data
 - **Profile Management**: Profile image upload, update, and delete functionality
 - **Subject Management**: Create subjects with admin approval workflow
-- **Admin System**: Admin-only endpoints for subject approval and management
+- **Paper Management**: Upload, view, download PDF papers (past papers & model papers)
+- **Admin System**: Admin-only endpoints for subject approval and paper management
 - **Email Service**: Welcome emails and OTP delivery via nodemailer
+- **File Management**: PDF upload with validation and secure serving
 - **Input Validation**: Email, password, and user data validation
 - **Error Handling**: Comprehensive error responses with solutions
 - **API Documentation**: Complete Postman collection included
@@ -22,7 +24,7 @@ A Node.js Express backend with Firebase Firestore integration for user authentic
 - **Database**: Firebase Firestore
 - **Authentication**: JWT (JSON Web Tokens)
 - **Password Hashing**: bcryptjs
-- **File Upload**: multer (profile images)
+- **File Upload**: multer (profile images, PDF papers)
 - **Email Service**: nodemailer with Gmail SMTP
 - **Validation**: validator.js
 - **Development**: nodemon
@@ -112,6 +114,25 @@ JWT_SECRET=your-super-secret-jwt-key
 - **PUT** `/admin/subjects/:id/reject` - Reject a subject
 - **DELETE** `/admin/subjects/:id` - Delete a subject
 
+### Paper Management
+#### Upload & View Papers (PDF files)
+- **POST** `/subjects/:id/papers/upload` - Upload paper (past paper or model paper)
+- **GET** `/subjects/:id/papers` - Get all papers for subject
+- **GET** `/subjects/:id/papers/past` - Get past papers only
+- **GET** `/subjects/:id/papers/model` - Get model papers only
+
+#### Download & Manage Papers
+- **GET** `/papers/:id/download` - Download paper file
+- **GET** `/papers/:id/view` - View paper in browser
+- **DELETE** `/papers/:id` - Delete paper (admin or uploader only)
+
+**Paper Upload Requirements:**
+- File Type: PDF only (max 10MB)
+- Required: type ("past paper" or "model paper"), name, year
+- Optional: title (for model papers)
+- Permission: Any authenticated user can upload
+- Deletion: Admin and uploader only
+
 ### Other Routes
 - **GET** `/` - Server info and available endpoints
 - **GET** `/test-firebase` - Test Firebase connection
@@ -124,10 +145,12 @@ JWT_SECRET=your-super-secret-jwt-key
 1. Import the collections:
    - `Eduback_Auth_API.postman_collection.json` (Authentication endpoints)
    - `EduApp_Subject_Management.postman_collection.json` (Subject management endpoints)
+   - `EduApp_Paper_Management.postman_collection.json` (Paper management endpoints)
 2. Set base URL to: `http://localhost:4000`
 3. Follow the test cases in:
    - `POSTMAN_TESTING_GUIDE.md` (Authentication testing)
    - `SUBJECT_MANAGEMENT_API_GUIDE.md` (Subject management testing)
+   - `PAPER_MANAGEMENT_API_GUIDE.md` (Paper management testing)
 
 ### Using cURL
 ```bash
