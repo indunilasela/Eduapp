@@ -65,9 +65,11 @@ Copy a paper ID → Set as paper_id variable
 ### Step 4: Delete Answer ✅
 **Request:** `4. Delete Answer`
 **Method:** `DELETE /answers/{{answer_id}}`
-**Auth:** ✅ Required
+**Auth:** ✅ Required (Admin or Answer Uploader Only)
 
 **Expected:** Status 200, success message
+
+**Permissions:** Only admin (i.asela016@gmail.com) or the user who uploaded the answer can delete it
 
 ---
 
