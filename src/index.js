@@ -10,7 +10,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { initializeApp } = require('firebase/app');
-const { getFirestore, doc, setDoc, getDoc, query, collection, where, getDocs, deleteDoc, connectFirestoreEmulator } = require('firebase/firestore');
+const { getFirestore, doc, setDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, connectFirestoreEmulator } = require('firebase/firestore');
 const { sendWelcomeEmail, sendPasswordResetEmail, testEmailConnection } = require('./emailService');
 
 const app = express();
@@ -110,6 +110,43 @@ const uploadPDF = multer({
   fileFilter: pdfFileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit for PDFs
+  }
+});
+
+// Configure multer for answer uploads (PDFs)
+const answerStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadPath = 'uploads/answers/';
+    // Create directory if it doesn't exist
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: function (req, file, cb) {
+    // Create unique filename with timestamp
+    const timestamp = Date.now();
+    const originalName = file.originalname.replace(/\s+/g, '_'); // Replace spaces with underscores
+    cb(null, `answer_${timestamp}_${originalName}`);
+  }
+});
+
+// File filter for answer PDFs
+const answerFileFilter = (req, file, cb) => {
+  const allowedTypes = ['application/pdf'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only PDF files are allowed for answers'), false);
+  }
+};
+
+// Multer upload configuration for Answer PDFs
+const uploadAnswer = multer({
+  storage: answerStorage,
+  fileFilter: answerFileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit for answer PDFs
   }
 });
 
@@ -1396,6 +1433,336 @@ async function getPaperById(paperId) {
     return { success: false, error: error.message };
   }
 }
+
+// ===============================
+// ANSWER UTILITY FUNCTIONS
+// ===============================
+
+async function addAnswer(data) {
+  try {
+    const answersRef = collection(db, 'answers');
+    const docRef = await addDoc(answersRef, data);
+    console.log('✅ Answer added successfully with ID:', docRef.id);
+    return { success: true, id: docRef.id };
+  } catch (error) {
+    console.error('❌ Error adding answer:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getAnswersByPaper(paperId) {
+  try {
+    const answersRef = collection(db, 'answers');
+    const q = query(answersRef, where('paperId', '==', paperId));
+    const querySnapshot = await getDocs(q);
+    
+    const answers = [];
+    querySnapshot.forEach((doc) => {
+      answers.push({ id: doc.id, ...doc.data() });
+    });
+
+    console.log(`✅ Retrieved ${answers.length} answers for paper: ${paperId}`);
+    return { success: true, data: answers };
+  } catch (error) {
+    console.error('❌ Error reading answers data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function deleteAnswer(answerId) {
+  try {
+    const docRef = doc(db, 'answers', answerId);
+    await deleteDoc(docRef);
+    console.log('✅ Answer deleted successfully:', answerId);
+    return { success: true };
+  } catch (error) {
+    console.error('❌ Error deleting answer:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getAnswerById(answerId) {
+  try {
+    const docSnap = await getDoc(doc(db, 'answers', answerId));
+    if (docSnap.exists()) {
+      return { success: true, data: docSnap.data() };
+    } else {
+      return { success: false, message: 'Answer not found' };
+    }
+  } catch (error) {
+    console.error('❌ Error reading answer data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// ===============================
+// ANSWER MANAGEMENT ENDPOINTS
+// ===============================
+
+// Upload Answer endpoint
+app.post('/papers/:paperId/answers/upload', authenticateToken, uploadAnswer.single('answerFile'), async (req, res) => {
+  try {
+    const { paperId } = req.params;
+    const { title, description } = req.body;
+    const userId = req.user.userId;
+
+    // Validation
+    if (!title || !req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'Title and answer file are required'
+      });
+    }
+
+    // Verify the paper exists
+    const paperCheck = await getPaperById(paperId);
+    if (!paperCheck.success) {
+      // Delete uploaded file if paper doesn't exist
+      if (req.file) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (err) {
+          console.error('Error deleting file:', err);
+        }
+      }
+      return res.status(404).json({
+        success: false,
+        error: 'Paper not found'
+      });
+    }
+
+    // Get user data for uploader info
+    const userData = await readUserData(userId);
+    if (!userData.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'Unable to fetch user data'
+      });
+    }
+
+    const answerData = {
+      paperId: paperId,
+      title: title.trim(),
+      description: description ? description.trim() : '',
+      fileName: req.file.filename,
+      originalFileName: req.file.originalname,
+      filePath: req.file.path.replace(/\\/g, '/'),
+      fileSize: req.file.size,
+      uploadedBy: userId,
+      uploaderName: userData.data.fullName || 'Unknown',
+      uploaderEmail: userData.data.email || 'unknown@example.com',
+      uploadedAt: new Date()
+    };
+
+    const result = await addAnswer(answerData);
+
+    if (result.success) {
+      res.status(201).json({
+        success: true,
+        message: 'Answer uploaded successfully',
+        data: {
+          id: result.id,
+          paperId: paperId,
+          title: answerData.title,
+          description: answerData.description,
+          fileName: answerData.fileName,
+          originalFileName: answerData.originalFileName,
+          uploadedBy: answerData.uploaderName,
+          uploadedAt: answerData.uploadedAt
+        }
+      });
+    } else {
+      // Delete uploaded file on database error
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (err) {
+        console.error('Error deleting file:', err);
+      }
+      res.status(500).json({
+        success: false,
+        error: 'Failed to save answer data'
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error uploading answer:', error);
+    
+    // Clean up uploaded file on error
+    if (req.file) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (err) {
+        console.error('Error deleting file:', err);
+      }
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get Answers by Paper endpoint
+app.get('/papers/:paperId/answers', async (req, res) => {
+  try {
+    const { paperId } = req.params;
+
+    // Verify the paper exists
+    const paperCheck = await getPaperById(paperId);
+    if (!paperCheck.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Paper not found'
+      });
+    }
+
+    const result = await getAnswersByPaper(paperId);
+
+    if (result.success) {
+      // Format response data
+      const formattedAnswers = result.data.map(answer => ({
+        id: answer.id,
+        paperId: answer.paperId,
+        title: answer.title,
+        description: answer.description || '',
+        originalFileName: answer.originalFileName,
+        fileSize: answer.fileSize,
+        uploadedBy: answer.uploaderName,
+        uploadedAt: answer.uploadedAt
+      }));
+
+      res.json({
+        success: true,
+        data: formattedAnswers,
+        total: formattedAnswers.length
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error || 'Failed to retrieve answers'
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error retrieving answers:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Download Answer endpoint
+app.get('/answers/:answerId/download', async (req, res) => {
+  try {
+    const { answerId } = req.params;
+
+    const result = await getAnswerById(answerId);
+
+    if (!result.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Answer not found'
+      });
+    }
+
+    const answer = result.data;
+    const filePath = path.resolve(answer.filePath);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'Answer file not found on server'
+      });
+    }
+
+    // Set appropriate headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${answer.originalFileName}"`);
+
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+
+    fileStream.on('error', (err) => {
+      console.error('❌ Error streaming answer file:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Error downloading answer file'
+      });
+    });
+
+  } catch (error) {
+    console.error('❌ Error downloading answer:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete Answer endpoint
+app.delete('/answers/:answerId', authenticateToken, async (req, res) => {
+  try {
+    const { answerId } = req.params;
+    const userId = req.user.userId;
+    const userEmail = req.user.email;
+
+    // Get answer data first to check ownership
+    const answerResult = await getAnswerById(answerId);
+    if (!answerResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Answer not found'
+      });
+    }
+
+    const answer = answerResult.data;
+
+    // Check permissions: admin or uploader can delete
+    const isAdmin = userEmail === 'i.asela016@gmail.com';
+    const isUploader = answer.uploadedBy === userId;
+
+    if (!isAdmin && !isUploader) {
+      return res.status(403).json({
+        success: false,
+        error: 'You do not have permission to delete this answer'
+      });
+    }
+
+    // Delete from database
+    const deleteResult = await deleteAnswer(answerId);
+    
+    if (deleteResult.success) {
+      // Delete the actual file
+      try {
+        if (fs.existsSync(answer.filePath)) {
+          fs.unlinkSync(answer.filePath);
+          console.log('✅ Answer file deleted from server:', answer.filePath);
+        }
+      } catch (fileError) {
+        console.error('❌ Error deleting answer file:', fileError);
+        // Continue anyway since database record is deleted
+      }
+
+      res.json({
+        success: true,
+        message: 'Answer deleted successfully'
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: deleteResult.error || 'Failed to delete answer'
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error deleting answer:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
 
 // ===============================
 // SUBJECT MANAGEMENT ENDPOINTS
