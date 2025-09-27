@@ -1665,6 +1665,153 @@ async function getPendingVideos() {
   }
 }
 
+// Reference Link utility functions
+async function createReferenceLink(linkData) {
+  try {
+    const linkId = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
+    await setDoc(doc(db, 'referenceLinks', linkId), {
+      ...linkData,
+      id: linkId,
+      status: 'pending', // pending, approved, rejected
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+    return { success: true, linkId, message: 'Reference link uploaded successfully and pending approval' };
+  } catch (error) {
+    console.error('❌ Error creating reference link:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getReferenceLinksForSubject(subjectId, userRole = null, userId = null) {
+  try {
+    const linksRef = collection(db, 'referenceLinks');
+    let q;
+    
+    if (userRole === 'admin') {
+      // Admin can see all reference links
+      q = query(linksRef, where('subjectId', '==', subjectId));
+    } else if (userId) {
+      // Regular authenticated user can see approved links + their own pending links
+      const approvedQuery = query(linksRef, 
+        where('subjectId', '==', subjectId),
+        where('status', '==', 'approved')
+      );
+      const userPendingQuery = query(linksRef,
+        where('subjectId', '==', subjectId),
+        where('uploaderId', '==', userId)
+      );
+      
+      // Get both approved links and user's own links
+      const [approvedSnapshot, userSnapshot] = await Promise.all([
+        getDocs(approvedQuery),
+        getDocs(userPendingQuery)
+      ]);
+      
+      const links = [];
+      const addedIds = new Set();
+      
+      // Add approved links
+      approvedSnapshot.forEach((doc) => {
+        links.push({ id: doc.id, ...doc.data() });
+        addedIds.add(doc.id);
+      });
+      
+      // Add user's own links (if not already added)
+      userSnapshot.forEach((doc) => {
+        if (!addedIds.has(doc.id)) {
+          links.push({ id: doc.id, ...doc.data() });
+        }
+      });
+      
+      return { success: true, links, totalLinks: links.length };
+    } else {
+      // Public access - only approved links
+      q = query(linksRef, 
+        where('subjectId', '==', subjectId),
+        where('status', '==', 'approved')
+      );
+    }
+    
+    const querySnapshot = await getDocs(q);
+    const links = [];
+    querySnapshot.forEach((doc) => {
+      links.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    return { success: true, links, totalLinks: links.length };
+  } catch (error) {
+    console.error('❌ Error getting reference links:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function deleteReferenceLink(linkId, userRole, userId) {
+  try {
+    const linkDoc = await getDoc(doc(db, 'referenceLinks', linkId));
+    
+    if (!linkDoc.exists()) {
+      return { success: false, error: 'Reference link not found' };
+    }
+    
+    const linkData = linkDoc.data();
+    
+    // Only admin or the uploader can delete reference links
+    if (userRole !== 'admin' && linkData.uploaderId !== userId) {
+      return { success: false, error: 'Permission denied. Only admin or uploader can delete reference links.' };
+    }
+    
+    // Delete from Firestore
+    await deleteDoc(doc(db, 'referenceLinks', linkId));
+    
+    return { success: true, message: 'Reference link deleted successfully' };
+  } catch (error) {
+    console.error('❌ Error deleting reference link:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function updateReferenceLinkStatus(linkId, status, adminId) {
+  try {
+    const linkRef = doc(db, 'referenceLinks', linkId);
+    await setDoc(linkRef, {
+      status: status,
+      approvedBy: adminId,
+      approvedAt: new Date(),
+      updatedAt: new Date()
+    }, { merge: true });
+    
+    return { success: true, message: `Reference link ${status} successfully` };
+  } catch (error) {
+    console.error('❌ Error updating reference link status:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getPendingReferenceLinks() {
+  try {
+    const linksRef = collection(db, 'referenceLinks');
+    const q = query(linksRef, where('status', '==', 'pending'));
+    const querySnapshot = await getDocs(q);
+    
+    const links = [];
+    querySnapshot.forEach((doc) => {
+      links.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    return { success: true, links };
+  } catch (error) {
+    console.error('❌ Error getting pending reference links:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 async function deleteSubject(subjectId) {
   try {
     await deleteDoc(doc(db, 'subjects', subjectId));
@@ -3397,6 +3544,340 @@ app.get('/admin/videos', authenticateToken, isAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Get all videos error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ========================================
+// REFERENCE LINKS MANAGEMENT ENDPOINTS
+// ========================================
+
+// Upload reference link to a subject (authenticated users only)
+app.post('/subjects/:id/links/upload', authenticateToken, async (req, res) => {
+  try {
+    const subjectId = req.params.id;
+    const { url, title, description } = req.body;
+    const userId = req.user.userId;
+    
+    // Validate input
+    if (!url || !title) {
+      return res.status(400).json({
+        success: false,
+        error: 'URL and title are required'
+      });
+    }
+    
+    // Basic URL validation
+    try {
+      new URL(url);
+    } catch (urlError) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid URL format'
+      });
+    }
+    
+    // Get user data for uploader info
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const user = userData.data();
+    
+    const linkData = {
+      subjectId,
+      url,
+      title,
+      description: description || '',
+      uploaderId: userId,
+      uploaderName: user.name || user.username || user.email || 'Unknown User',
+      uploaderEmail: user.email || 'Unknown Email'
+    };
+    
+    const result = await createReferenceLink(linkData);
+    
+    if (result.success) {
+      res.status(201).json({
+        success: true,
+        linkId: result.linkId,
+        message: result.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Reference link upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get reference links for a subject
+app.get('/subjects/:id/links', async (req, res) => {
+  try {
+    const subjectId = req.params.id;
+    let userRole = null;
+    let userId = null;
+    
+    // Check if user is authenticated
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userId = decoded.userId;
+        
+        // Check user role
+        const userData = await getDoc(doc(db, 'users', userId));
+        if (userData.exists()) {
+          userRole = userData.data().email === 'i.asela016@gmail.com' ? 'admin' : 'user';
+        }
+      } catch (authError) {
+        // Continue as unauthenticated user
+        console.log('Invalid token, continuing as unauthenticated user');
+      }
+    }
+    
+    const result = await getReferenceLinksForSubject(subjectId, userRole, userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        links: result.links,
+        totalLinks: result.totalLinks
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get reference links error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Redirect to reference link (with click tracking)
+app.get('/links/:id/redirect', async (req, res) => {
+  try {
+    const linkId = req.params.id;
+    
+    const linkDoc = await getDoc(doc(db, 'referenceLinks', linkId));
+    
+    if (!linkDoc.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'Reference link not found'
+      });
+    }
+    
+    const linkData = linkDoc.data();
+    
+    // Only allow access to approved links
+    if (linkData.status !== 'approved') {
+      return res.status(403).json({
+        success: false,
+        error: 'Reference link not approved or is pending approval'
+      });
+    }
+    
+    // Optional: Track click count
+    try {
+      const clickCount = (linkData.clickCount || 0) + 1;
+      await setDoc(doc(db, 'referenceLinks', linkId), {
+        clickCount,
+        lastClickedAt: new Date()
+      }, { merge: true });
+    } catch (trackError) {
+      console.error('❌ Click tracking error:', trackError);
+      // Continue with redirect even if tracking fails
+    }
+    
+    // Redirect to the actual URL
+    res.redirect(linkData.url);
+  } catch (error) {
+    console.error('❌ Reference link redirect error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete reference link (uploader or admin only)
+app.delete('/links/:id', authenticateToken, async (req, res) => {
+  try {
+    const linkId = req.params.id;
+    const userId = req.user.userId;
+    
+    // Get user data to check role
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const userRole = userData.data().email === 'i.asela016@gmail.com' ? 'admin' : 'user';
+    
+    const result = await deleteReferenceLink(linkId, userRole, userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      const statusCode = result.error.includes('Permission denied') ? 403 : 500;
+      res.status(statusCode).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Delete reference link error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ===== ADMIN REFERENCE LINKS MANAGEMENT ENDPOINTS =====
+
+// Get pending reference links (admin only)
+app.get('/admin/links/pending', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const result = await getPendingReferenceLinks();
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        links: result.links,
+        totalPending: result.links.length
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get pending reference links error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Approve reference link (admin only)
+app.put('/admin/links/:id/approve', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const linkId = req.params.id;
+    const adminId = req.user.userId;
+    
+    const result = await updateReferenceLinkStatus(linkId, 'approved', adminId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Approve reference link error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Reject reference link (admin only)
+app.put('/admin/links/:id/reject', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const linkId = req.params.id;
+    const adminId = req.user.userId;
+    
+    const result = await updateReferenceLinkStatus(linkId, 'rejected', adminId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Reject reference link error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get all reference links (admin only)
+app.get('/admin/links', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const linksRef = collection(db, 'referenceLinks');
+    const querySnapshot = await getDocs(linksRef);
+    
+    const links = [];
+    querySnapshot.forEach((doc) => {
+      links.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    // Group links by status
+    const groupedLinks = {
+      pending: links.filter(l => l.status === 'pending'),
+      approved: links.filter(l => l.status === 'approved'),
+      rejected: links.filter(l => l.status === 'rejected')
+    };
+    
+    res.json({
+      success: true,
+      links: links,
+      summary: {
+        total: links.length,
+        pending: groupedLinks.pending.length,
+        approved: groupedLinks.approved.length,
+        rejected: groupedLinks.rejected.length
+      },
+      groupedLinks
+    });
+  } catch (error) {
+    console.error('❌ Get all reference links error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
