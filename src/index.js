@@ -119,6 +119,50 @@ const uploadNotes = multer({
   }
 });
 
+// Video file upload configuration (supports mp4, avi, mov, mkv, webm)
+const videoStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadPath = path.join(__dirname, '../uploads/videos');
+    // Ensure directory exists
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: function (req, file, cb) {
+    // Generate unique filename with timestamp and random string
+    const uniqueSuffix = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    const extension = path.extname(file.originalname);
+    cb(null, uniqueSuffix + extension);
+  }
+});
+
+const videoFileFilter = (req, file, cb) => {
+  // Allow common video formats
+  const allowedTypes = [
+    'video/mp4',
+    'video/avi', 
+    'video/x-msvideo', // avi alternative
+    'video/quicktime', // mov
+    'video/x-matroska', // mkv
+    'video/webm'
+  ];
+  
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only MP4, AVI, MOV, MKV, and WEBM video files are allowed'), false);
+  }
+};
+
+const uploadVideos = multer({
+  storage: videoStorage,
+  fileFilter: videoFileFilter,
+  limits: {
+    fileSize: 500 * 1024 * 1024 // 500MB limit for videos
+  }
+});
+
 // PDF storage configuration for papers
 const pdfStorage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -602,6 +646,13 @@ app.get('/', (req, res) => {
       subjectNotes: 'GET /subjects/:id/notes, POST /subjects/:id/notes/upload (protected)',
       noteDownload: 'GET /notes/:id/download (all users)',
       noteDelete: 'DELETE /notes/:id (admin/uploader only)',
+      subjectVideos: 'GET /subjects/:id/videos, POST /subjects/:id/videos/upload (protected)',
+      videoDownload: 'GET /videos/:id/download (approved videos + own pending)',
+      videoDelete: 'DELETE /videos/:id (admin/uploader only)',
+      adminVideosPending: 'GET /admin/videos/pending (admin only)',
+      adminVideosApprove: 'PUT /admin/videos/:id/approve (admin only)',
+      adminVideosReject: 'PUT /admin/videos/:id/reject (admin only)',
+      adminVideosAll: 'GET /admin/videos (admin only)',
       testUpload: 'POST /test-upload (debug multipart issues)',
       firestoreSetup: 'Check FIREBASE_SETUP_GUIDE.md for Firestore setup'
     }
@@ -1455,6 +1506,161 @@ async function deleteNote(noteId, userRole, userId) {
     return { success: true, message: 'Note deleted successfully' };
   } catch (error) {
     console.error('❌ Error deleting note:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Video utility functions
+async function createVideo(videoData) {
+  try {
+    const videoId = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
+    await setDoc(doc(db, 'videos', videoId), {
+      ...videoData,
+      id: videoId,
+      status: 'pending', // pending, approved, rejected
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+    return { success: true, videoId, message: 'Video uploaded successfully and pending approval' };
+  } catch (error) {
+    console.error('❌ Error creating video:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getVideosBySubject(subjectId, userRole = null, userId = null) {
+  try {
+    const videosRef = collection(db, 'videos');
+    let q;
+    
+    if (userRole === 'admin') {
+      // Admin can see all videos
+      q = query(videosRef, where('subjectId', '==', subjectId));
+    } else if (userId) {
+      // Regular authenticated user can see approved videos + their own pending videos
+      const approvedQuery = query(videosRef, 
+        where('subjectId', '==', subjectId),
+        where('status', '==', 'approved')
+      );
+      const userPendingQuery = query(videosRef,
+        where('subjectId', '==', subjectId),
+        where('uploaderId', '==', userId)
+      );
+      
+      // Get both approved videos and user's own videos
+      const [approvedSnapshot, userSnapshot] = await Promise.all([
+        getDocs(approvedQuery),
+        getDocs(userPendingQuery)
+      ]);
+      
+      const videos = [];
+      const addedIds = new Set();
+      
+      // Add approved videos
+      approvedSnapshot.forEach((doc) => {
+        videos.push({ id: doc.id, ...doc.data() });
+        addedIds.add(doc.id);
+      });
+      
+      // Add user's own videos (if not already added)
+      userSnapshot.forEach((doc) => {
+        if (!addedIds.has(doc.id)) {
+          videos.push({ id: doc.id, ...doc.data() });
+        }
+      });
+      
+      return { success: true, videos, totalVideos: videos.length };
+    } else {
+      // Public access - only approved videos
+      q = query(videosRef, 
+        where('subjectId', '==', subjectId),
+        where('status', '==', 'approved')
+      );
+    }
+    
+    const querySnapshot = await getDocs(q);
+    const videos = [];
+    querySnapshot.forEach((doc) => {
+      videos.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    return { success: true, videos, totalVideos: videos.length };
+  } catch (error) {
+    console.error('❌ Error getting videos:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function deleteVideo(videoId, userRole, userId) {
+  try {
+    const videoDoc = await getDoc(doc(db, 'videos', videoId));
+    
+    if (!videoDoc.exists()) {
+      return { success: false, error: 'Video not found' };
+    }
+    
+    const videoData = videoDoc.data();
+    
+    // Only admin or the uploader can delete videos
+    if (userRole !== 'admin' && videoData.uploaderId !== userId) {
+      return { success: false, error: 'Permission denied. Only admin or uploader can delete videos.' };
+    }
+    
+    // Delete the file from filesystem
+    if (videoData.filePath) {
+      const fullPath = path.join(__dirname, '..', videoData.filePath.replace('/uploads/', 'uploads/'));
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+      }
+    }
+    
+    // Delete from Firestore
+    await deleteDoc(doc(db, 'videos', videoId));
+    
+    return { success: true, message: 'Video deleted successfully' };
+  } catch (error) {
+    console.error('❌ Error deleting video:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function updateVideoStatus(videoId, status, adminId) {
+  try {
+    const videoRef = doc(db, 'videos', videoId);
+    await setDoc(videoRef, {
+      status: status,
+      approvedBy: adminId,
+      approvedAt: new Date(),
+      updatedAt: new Date()
+    }, { merge: true });
+    
+    return { success: true, message: `Video ${status} successfully` };
+  } catch (error) {
+    console.error('❌ Error updating video status:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getPendingVideos() {
+  try {
+    const videosRef = collection(db, 'videos');
+    const q = query(videosRef, where('status', '==', 'pending'));
+    const querySnapshot = await getDocs(q);
+    
+    const videos = [];
+    querySnapshot.forEach((doc) => {
+      videos.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    return { success: true, videos };
+  } catch (error) {
+    console.error('❌ Error getting pending videos:', error);
     return { success: false, error: error.message };
   }
 }
@@ -2772,6 +2978,425 @@ app.delete('/notes/:noteId', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     console.error('❌ Delete note error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ===== VIDEO MANAGEMENT ENDPOINTS =====
+
+// Upload video endpoint
+app.post('/subjects/:subjectId/videos/upload', authenticateToken, (req, res, next) => {
+  // Check content-type before processing
+  if (!req.headers['content-type'] || !req.headers['content-type'].includes('multipart/form-data')) {
+    return res.status(400).json({
+      success: false,
+      error: 'Content-Type must be multipart/form-data'
+    });
+  }
+  next();
+}, handleMulterError(uploadVideos.single('videoFile')), async (req, res) => {
+  try {
+    const { subjectId } = req.params;
+    const { subject, title, description } = req.body;
+    const { userId, email } = req.user;
+
+    // Log request details for debugging
+    console.log('🎥 Video upload request:', {
+      subjectId,
+      subject,
+      title,
+      hasFile: !!req.file,
+      contentType: req.headers['content-type']
+    });
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please select a video file to upload'
+      });
+    }
+
+    // Validate required fields
+    if (!subject || !title) {
+      return res.status(400).json({
+        success: false,
+        error: 'Subject and title are required'
+      });
+    }
+
+    // Get user data
+    const userData = await readUserData(userId);
+    if (!userData.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Create video data
+    const videoData = {
+      subjectId,
+      subject,
+      title,
+      description: description || '',
+      fileName: req.file.originalname,
+      filePath: `/uploads/videos/${req.file.filename}`,
+      fileSize: req.file.size,
+      mimeType: req.file.mimetype,
+      uploaderId: userId,
+      uploaderName: userData.data.firstName + ' ' + userData.data.lastName,
+      uploaderEmail: email
+    };
+
+    const result = await createVideo(videoData);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message,
+        videoId: result.videoId,
+        video: videoData
+      });
+    } else {
+      // Delete uploaded file if database save failed
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+      
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Video upload error:', error);
+    
+    // Delete uploaded file if error occurred
+    if (req.file) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get videos by subject endpoint
+app.get('/subjects/:subjectId/videos', async (req, res) => {
+  try {
+    const { subjectId } = req.params;
+    const authHeader = req.headers['authorization'];
+    let userRole = null;
+    let userId = null;
+    
+    // Check if user is authenticated (optional for this endpoint)
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userId = decoded.userId;
+        
+        // Check if user is admin
+        const userData = await readUserData(userId);
+        if (userData.success) {
+          userRole = userData.data.email === 'i.asela016@gmail.com' ? 'admin' : 'user';
+        }
+      } catch (jwtError) {
+        // Invalid token, treat as public access
+        console.log('Invalid or expired token, treating as public access');
+      }
+    }
+    
+    const result = await getVideosBySubject(subjectId, userRole, userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        videos: result.videos,
+        totalVideos: result.totalVideos,
+        userRole: userRole,
+        message: userRole === 'admin' ? 'Showing all videos (admin view)' : 
+                userRole === 'user' ? 'Showing approved videos + your pending videos' : 
+                'Showing approved videos only'
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get videos error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Download/Stream video endpoint (with approval system)
+app.get('/videos/:videoId/download', async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    const authHeader = req.headers['authorization'];
+    let userRole = null;
+    let userId = null;
+    
+    // Check if user is authenticated (optional)
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userId = decoded.userId;
+        
+        // Check if user is admin
+        const userData = await readUserData(userId);
+        if (userData.success) {
+          userRole = userData.data.email === 'i.asela016@gmail.com' ? 'admin' : 'user';
+        }
+      } catch (jwtError) {
+        // Invalid token, treat as public access
+      }
+    }
+    
+    const videoDoc = await getDoc(doc(db, 'videos', videoId));
+    
+    if (!videoDoc.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'Video not found'
+      });
+    }
+    
+    const videoData = videoDoc.data();
+    
+    // Check access permissions
+    const canAccess = 
+      videoData.status === 'approved' || // Approved videos - public access
+      userRole === 'admin' || // Admin can access all videos
+      (userId && videoData.uploaderId === userId); // Uploader can access their own videos
+    
+    if (!canAccess) {
+      return res.status(403).json({
+        success: false,
+        error: 'Video is pending approval and not accessible'
+      });
+    }
+    
+    const filePath = path.join(__dirname, '..', videoData.filePath.replace('/uploads/', 'uploads/'));
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'Video file not found on server'
+      });
+    }
+    
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+    
+    if (range) {
+      // Handle video streaming with range requests
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = (end - start) + 1;
+      
+      const file = fs.createReadStream(filePath, { start, end });
+      const head = {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': videoData.mimeType,
+      };
+      
+      res.writeHead(206, head);
+      file.pipe(res);
+    } else {
+      // Send entire file
+      const head = {
+        'Content-Length': fileSize,
+        'Content-Type': videoData.mimeType,
+        'Content-Disposition': `attachment; filename="${videoData.fileName}"`,
+      };
+      
+      res.writeHead(200, head);
+      fs.createReadStream(filePath).pipe(res);
+    }
+    
+  } catch (error) {
+    console.error('❌ Download video error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete video endpoint (admin and uploader only)
+app.delete('/videos/:videoId', authenticateToken, async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    const { userId } = req.user;
+    
+    // Get user data to check if admin
+    const userData = await readUserData(userId);
+    if (!userData.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const userRole = userData.data.email === 'i.asela016@gmail.com' ? 'admin' : 'user';
+    
+    const result = await deleteVideo(videoId, userRole, userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      const statusCode = result.error.includes('Permission denied') ? 403 : 500;
+      res.status(statusCode).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Delete video error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ===== ADMIN VIDEO MANAGEMENT ENDPOINTS =====
+
+// Get pending videos (admin only)
+app.get('/admin/videos/pending', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const result = await getPendingVideos();
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        videos: result.videos,
+        totalPending: result.videos.length
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get pending videos error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Approve video (admin only)
+app.put('/admin/videos/:id/approve', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.user;
+    
+    const result = await updateVideoStatus(id, 'approved', userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Approve video error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Reject video (admin only)
+app.put('/admin/videos/:id/reject', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.user;
+    
+    const result = await updateVideoStatus(id, 'rejected', userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Reject video error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get all videos (admin only)
+app.get('/admin/videos', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const videosRef = collection(db, 'videos');
+    const querySnapshot = await getDocs(videosRef);
+    
+    const videos = [];
+    querySnapshot.forEach((doc) => {
+      videos.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    // Group videos by status
+    const groupedVideos = {
+      pending: videos.filter(v => v.status === 'pending'),
+      approved: videos.filter(v => v.status === 'approved'),
+      rejected: videos.filter(v => v.status === 'rejected')
+    };
+    
+    res.json({
+      success: true,
+      videos: videos,
+      summary: {
+        total: videos.length,
+        pending: groupedVideos.pending.length,
+        approved: groupedVideos.approved.length,
+        rejected: groupedVideos.rejected.length
+      },
+      groupedVideos
+    });
+  } catch (error) {
+    console.error('❌ Get all videos error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
