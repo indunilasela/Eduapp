@@ -26,14 +26,15 @@ app.use(express.json());
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Content-Length, Cache-Control');
   
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
-    res.sendStatus(200);
-  } else {
-    next();
+    res.status(200).end();
+    return;
   }
+  
+  next();
 });
 
 // Serve static files from uploads directory
@@ -73,6 +74,48 @@ const upload = multer({
   fileFilter: fileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB limit
+  }
+});
+
+// Notes file upload configuration (supports pptx, docx, pdf, txt)
+const notesStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadPath = path.join(__dirname, '../uploads/notes');
+    // Ensure directory exists
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: function (req, file, cb) {
+    // Generate unique filename with timestamp and random string
+    const uniqueSuffix = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    const extension = path.extname(file.originalname);
+    cb(null, uniqueSuffix + extension);
+  }
+});
+
+const notesFileFilter = (req, file, cb) => {
+  // Allow pptx, docx, pdf, txt files
+  const allowedTypes = [
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation', // pptx
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx
+    'application/pdf', // pdf
+    'text/plain' // txt
+  ];
+  
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only PPTX, DOCX, PDF, and TXT files are allowed'), false);
+  }
+};
+
+const uploadNotes = multer({
+  storage: notesStorage,
+  fileFilter: notesFileFilter,
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB limit for notes
   }
 });
 
@@ -555,6 +598,11 @@ app.get('/', (req, res) => {
       profileImageGet: 'GET /auth/profile-image (protected)',
       users: 'GET /users/:id',
       testEmail: 'GET /test-email',
+      subjects: 'GET /subjects (approved), POST /subjects/create (protected)',
+      subjectNotes: 'GET /subjects/:id/notes, POST /subjects/:id/notes/upload (protected)',
+      noteDownload: 'GET /notes/:id/download (all users)',
+      noteDelete: 'DELETE /notes/:id (admin/uploader only)',
+      testUpload: 'POST /test-upload (debug multipart issues)',
       firestoreSetup: 'Check FIREBASE_SETUP_GUIDE.md for Firestore setup'
     }
   });
@@ -1332,6 +1380,81 @@ async function updateSubjectStatus(subjectId, status, adminId) {
     return { success: true, message: `Subject ${status} successfully` };
   } catch (error) {
     console.error('❌ Error updating subject status:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Notes utility functions
+async function createNote(noteData) {
+  try {
+    const noteId = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
+    await setDoc(doc(db, 'notes', noteId), {
+      ...noteData,
+      id: noteId,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+    return { success: true, noteId, message: 'Note uploaded successfully' };
+  } catch (error) {
+    console.error('❌ Error creating note:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getNotesBySubject(subjectId) {
+  try {
+    const notesRef = collection(db, 'notes');
+    const q = query(notesRef, where('subjectId', '==', subjectId));
+    const querySnapshot = await getDocs(q);
+    
+    const notes = [];
+    querySnapshot.forEach((doc) => {
+      notes.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    // Separate notes into books and short notes
+    const books = notes.filter(note => note.type === 'book');
+    const shortNotes = notes.filter(note => note.type === 'short_note');
+    
+    return { success: true, books, shortNotes, totalNotes: notes.length };
+  } catch (error) {
+    console.error('❌ Error getting notes:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function deleteNote(noteId, userRole, userId) {
+  try {
+    const noteDoc = await getDoc(doc(db, 'notes', noteId));
+    
+    if (!noteDoc.exists()) {
+      return { success: false, error: 'Note not found' };
+    }
+    
+    const noteData = noteDoc.data();
+    
+    // Only admin or the uploader can delete notes
+    if (userRole !== 'admin' && noteData.uploaderId !== userId) {
+      return { success: false, error: 'Permission denied. Only admin or uploader can delete notes.' };
+    }
+    
+    // Delete the file from filesystem
+    if (noteData.filePath) {
+      const fullPath = path.join(__dirname, '..', noteData.filePath.replace('/uploads/', 'uploads/'));
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+      }
+    }
+    
+    // Delete from Firestore
+    await deleteDoc(doc(db, 'notes', noteId));
+    
+    return { success: true, message: 'Note deleted successfully' };
+  } catch (error) {
+    console.error('❌ Error deleting note:', error);
     return { success: false, error: error.message };
   }
 }
@@ -2333,6 +2456,322 @@ app.delete('/papers/:paperId', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     console.error('❌ Delete paper error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ===== NOTES MANAGEMENT ENDPOINTS =====
+
+// Test endpoint for multipart uploads
+app.post('/test-upload', authenticateToken, (req, res, next) => {
+  console.log('🔍 Testing multipart upload...');
+  console.log('Headers:', req.headers);
+  console.log('Content-Type:', req.headers['content-type']);
+  
+  // Simple test with basic multer
+  const testUpload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 1024 * 1024 } // 1MB for testing
+  }).single('testFile');
+  
+  testUpload(req, res, (err) => {
+    if (err) {
+      console.error('❌ Test upload error:', err);
+      return res.status(400).json({
+        success: false,
+        error: 'Test upload failed: ' + err.message,
+        details: {
+          contentType: req.headers['content-type'],
+          hasBody: !!req.body,
+          bodyKeys: Object.keys(req.body || {}),
+          hasFile: !!req.file
+        }
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Test upload successful',
+      details: {
+        contentType: req.headers['content-type'],
+        hasBody: !!req.body,
+        bodyKeys: Object.keys(req.body || {}),
+        hasFile: !!req.file,
+        file: req.file ? {
+          originalname: req.file.originalname,
+          mimetype: req.file.mimetype,
+          size: req.file.size
+        } : null
+      }
+    });
+  });
+});
+
+// Multer error handling middleware
+const handleMulterError = (upload) => {
+  return (req, res, next) => {
+    upload(req, res, (err) => {
+      if (err) {
+        console.error('❌ Multer error:', err);
+        
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(413).json({
+            success: false,
+            error: 'File size too large. Maximum size is 50MB'
+          });
+        }
+        
+        if (err.message === 'Only PPTX, DOCX, PDF, and TXT files are allowed') {
+          return res.status(400).json({
+            success: false,
+            error: err.message
+          });
+        }
+        
+        if (err.message.includes('Malformed part header')) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid form data. Please ensure you are sending multipart/form-data with proper headers.'
+          });
+        }
+        
+        return res.status(400).json({
+          success: false,
+          error: 'File upload error: ' + err.message
+        });
+      }
+      next();
+    });
+  };
+};
+
+// Upload notes endpoint (Book or Short Notes)
+app.post('/subjects/:subjectId/notes/upload', authenticateToken, (req, res, next) => {
+  // Check content-type before processing
+  if (!req.headers['content-type'] || !req.headers['content-type'].includes('multipart/form-data')) {
+    return res.status(400).json({
+      success: false,
+      error: 'Content-Type must be multipart/form-data'
+    });
+  }
+  next();
+}, handleMulterError(uploadNotes.single('noteFile')), async (req, res) => {
+  try {
+    const { subjectId } = req.params;
+    const { noteType, subject, lessonName, bookName, title, description } = req.body;
+    const { userId, email } = req.user;
+
+    // Log request details for debugging
+    console.log('📝 Note upload request:', {
+      subjectId,
+      noteType,
+      subject,
+      lessonName,
+      hasFile: !!req.file,
+      contentType: req.headers['content-type']
+    });
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please select a file to upload'
+      });
+    }
+
+    // Validate required fields based on note type
+    if (!noteType || !subject || !lessonName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Note type, subject, and lesson name are required'
+      });
+    }
+
+    if (noteType === 'book' && !bookName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Book name is required for book notes'
+      });
+    }
+
+    if (noteType === 'short_note' && !title) {
+      return res.status(400).json({
+        success: false,
+        error: 'Title is required for short notes'
+      });
+    }
+
+    // Get user data
+    const userData = await readUserData(userId);
+    if (!userData.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Create note data
+    const noteData = {
+      subjectId,
+      type: noteType, // 'book' or 'short_note'
+      subject,
+      lessonName,
+      description: description || '',
+      fileName: req.file.originalname,
+      filePath: `/uploads/notes/${req.file.filename}`,
+      fileSize: req.file.size,
+      mimeType: req.file.mimetype,
+      uploaderId: userId,
+      uploaderName: userData.data.firstName + ' ' + userData.data.lastName,
+      uploaderEmail: email
+    };
+
+    // Add specific fields based on note type
+    if (noteType === 'book') {
+      noteData.bookName = bookName;
+    } else if (noteType === 'short_note') {
+      noteData.title = title;
+    }
+
+    const result = await createNote(noteData);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message,
+        noteId: result.noteId,
+        note: noteData
+      });
+    } else {
+      // Delete uploaded file if database save failed
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+      
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Note upload error:', error);
+    
+    // Delete uploaded file if error occurred
+    if (req.file) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get notes by subject endpoint
+app.get('/subjects/:subjectId/notes', async (req, res) => {
+  try {
+    const { subjectId } = req.params;
+    
+    const result = await getNotesBySubject(subjectId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        books: result.books,
+        shortNotes: result.shortNotes,
+        totalNotes: result.totalNotes
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get notes error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Download note endpoint (accessible to all users)
+app.get('/notes/:noteId/download', async (req, res) => {
+  try {
+    const { noteId } = req.params;
+    
+    const noteDoc = await getDoc(doc(db, 'notes', noteId));
+    
+    if (!noteDoc.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'Note not found'
+      });
+    }
+    
+    const noteData = noteDoc.data();
+    const filePath = path.join(__dirname, '..', noteData.filePath.replace('/uploads/', 'uploads/'));
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'File not found on server'
+      });
+    }
+    
+    // Set appropriate headers for download
+    res.setHeader('Content-Disposition', `attachment; filename="${noteData.fileName}"`);
+    res.setHeader('Content-Type', noteData.mimeType);
+    
+    // Send file
+    res.sendFile(filePath);
+    
+  } catch (error) {
+    console.error('❌ Download note error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete note endpoint (admin and uploader only)
+app.delete('/notes/:noteId', authenticateToken, async (req, res) => {
+  try {
+    const { noteId } = req.params;
+    const { userId } = req.user;
+    
+    // Get user data to check if admin
+    const userData = await readUserData(userId);
+    if (!userData.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const userRole = userData.data.email === 'i.asela016@gmail.com' ? 'admin' : 'user';
+    
+    const result = await deleteNote(noteId, userRole, userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message
+      });
+    } else {
+      const statusCode = result.error.includes('Permission denied') ? 403 : 500;
+      res.status(statusCode).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Delete note error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
