@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EduBack Real-Time Chat Test</title>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .chat-container { 
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status { 
+            padding: 10px; 
+            margin: 10px 0; 
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .connected { background: #4CAF50; color: white; }
+        .disconnected { background: #f44336; color: white; }
+        .messages { 
+            height: 300px; 
+            overflow-y: auto; 
+            border: 1px solid #ddd; 
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background: #fafafa;
+        }
+        .message { 
+            margin: 10px 0; 
+            padding: 10px;
+            border-radius: 10px;
+            max-width: 70%;
+        }
+        .own-message { 
+            background: #2196F3; 
+            color: white; 
+            margin-left: auto;
+            text-align: right;
+        }
+        .other-message { 
+            background: #e0e0e0; 
+            color: black;
+        }
+        .message-info {
+            font-size: 0.8em;
+            opacity: 0.7;
+            margin-bottom: 5px;
+        }
+        .typing-indicator {
+            font-style: italic;
+            color: #666;
+            padding: 5px 10px;
+        }
+        .input-area { 
+            display: flex; 
+            gap: 10px;
+            margin-top: 10px;
+        }
+        input[type="text"] { 
+            flex: 1; 
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            outline: none;
+        }
+        button { 
+            padding: 10px 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .auth-section {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .online-users {
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <h1>🚀 EduBack Real-Time Chat Test</h1>
+        
+        <div class="auth-section">
+            <h3>Authentication (Use your actual JWT token)</h3>
+            <input type="text" id="tokenInput" placeholder="Enter your JWT token" style="width: 60%; margin-right: 10px;">
+            <input type="text" id="userIdInput" placeholder="User ID" style="width: 25%; margin-right: 10px;">
+            <button onclick="authenticate()">Connect</button>
+        </div>
+
+        <div id="status" class="status disconnected">🔴 Not Connected</div>
+        
+        <div class="online-users">
+            <strong>Online Users:</strong> <span id="onlineUsers">None</span>
+        </div>
+
+        <div>
+            <strong>Room:</strong> 
+            <input type="text" id="subjectId" placeholder="Subject ID" value="subject123" style="width: 120px;">
+            <input type="text" id="paperId" placeholder="Paper ID (optional)" value="" style="width: 120px;">
+            <button onclick="joinRoom()">Join Room</button>
+        </div>
+
+        <div id="messages" class="messages"></div>
+        
+        <div class="typing-indicator" id="typingIndicator"></div>
+
+        <div class="input-area">
+            <input type="text" id="messageInput" placeholder="Type your message..." 
+                   onkeypress="handleKeyPress(event)" onkeyup="handleTyping()" maxlength="1000">
+            <button onclick="sendMessage()" id="sendBtn" disabled>Send</button>
+        </div>
+
+        <div style="margin-top: 20px;">
+            <button onclick="testConnection()">Test Connection</button>
+            <button onclick="clearMessages()">Clear Messages</button>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let currentUserId = null;
+        let currentRoom = null;
+        let typingTimeout = null;
+        let isTyping = false;
+
+        function authenticate() {
+            const token = document.getElementById('tokenInput').value.trim();
+            const userId = document.getElementById('userIdInput').value.trim();
+            
+            if (!token || !userId) {
+                alert('Please enter both JWT token and User ID');
+                return;
+            }
+
+            currentUserId = userId;
+            initializeSocket(token, userId);
+        }
+
+        function initializeSocket(token, userId) {
+            // Disconnect existing socket
+            if (socket) {
+                socket.disconnect();
+            }
+
+            // Create new socket connection
+            socket = io('http://localhost:4000', {
+                transports: ['websocket'],
+                upgrade: true
+            });
+
+            // Connection events
+            socket.on('connect', () => {
+                updateStatus('🟡 Connected - Authenticating...', 'connected');
+                socket.emit('authenticate', { token, userId });
+            });
+
+            socket.on('authentication-success', () => {
+                updateStatus('🟢 Connected & Authenticated', 'connected');
+                document.getElementById('sendBtn').disabled = false;
+                addSystemMessage('✅ Successfully authenticated');
+            });
+
+            socket.on('authentication-failed', ({ error }) => {
+                updateStatus('🔴 Authentication Failed', 'disconnected');
+                addSystemMessage(`❌ Authentication failed: ${error}`);
+            });
+
+            socket.on('joined-chat', ({ roomName, subjectId, paperId }) => {
+                currentRoom = roomName;
+                addSystemMessage(`👥 Joined room: ${roomName}`);
+                socket.emit('get-online-users', { subjectId, paperId });
+            });
+
+            // Message events
+            socket.on('new-message', (message) => {
+                addMessage(message);
+            });
+
+            socket.on('message-sent', ({ messageId, tempId }) => {
+                addSystemMessage(`✅ Message sent successfully (ID: ${messageId})`);
+            });
+
+            socket.on('message-error', ({ error, tempId }) => {
+                addSystemMessage(`❌ Message error: ${error}`);
+            });
+
+            socket.on('message-deleted', ({ messageId, deletedBy }) => {
+                removeMessage(messageId);
+                addSystemMessage(`🗑️ Message deleted by user ${deletedBy}`);
+            });
+
+            // Typing events
+            socket.on('user-typing', ({ userId, userName, isTyping: typing }) => {
+                if (userId !== currentUserId) {
+                    updateTypingIndicator(userName, typing);
+                }
+            });
+
+            // User events
+            socket.on('online-users', ({ users, count }) => {
+                updateOnlineUsers(users);
+            });
+
+            socket.on('user-joined', ({ userId, userName }) => {
+                if (userId !== currentUserId) {
+                    addSystemMessage(`👤 ${userName} joined the chat`);
+                }
+            });
+
+            socket.on('user-left', ({ userId }) => {
+                addSystemMessage(`👋 User ${userId} left the chat`);
+            });
+
+            socket.on('disconnect', (reason) => {
+                updateStatus('🔴 Disconnected', 'disconnected');
+                document.getElementById('sendBtn').disabled = true;
+                addSystemMessage(`🔌 Disconnected: ${reason}`);
+            });
+
+            socket.on('pong', ({ timestamp }) => {
+                addSystemMessage(`🏓 Pong received at ${new Date(timestamp).toLocaleTimeString()}`);
+            });
+        }
+
+        function joinRoom() {
+            if (!socket || !currentUserId) {
+                alert('Please authenticate first');
+                return;
+            }
+
+            const subjectId = document.getElementById('subjectId').value.trim();
+            const paperId = document.getElementById('paperId').value.trim() || null;
+
+            if (!subjectId) {
+                alert('Subject ID is required');
+                return;
+            }
+
+            socket.emit('join-chat', { subjectId, paperId, userId: currentUserId });
+        }
+
+        function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const text = messageInput.value.trim();
+            
+            if (!text || !socket || !currentUserId) return;
+
+            const subjectId = document.getElementById('subjectId').value.trim();
+            const paperId = document.getElementById('paperId').value.trim() || null;
+
+            const messageData = {
+                subjectId,
+                paperId,
+                text,
+                messageType: 'text',
+                tempId: Date.now() // For tracking
+            };
+
+            socket.emit('send-message', messageData);
+            messageInput.value = '';
+            stopTyping();
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        function handleTyping() {
+            if (!socket || !currentUserId) return;
+
+            const subjectId = document.getElementById('subjectId').value.trim();
+            const paperId = document.getElementById('paperId').value.trim() || null;
+            const text = document.getElementById('messageInput').value;
+
+            if (text.length > 0 && !isTyping) {
+                isTyping = true;
+                socket.emit('typing-start', { subjectId, paperId, userName: `User ${currentUserId}` });
+            }
+
+            // Clear existing timeout
+            if (typingTimeout) {
+                clearTimeout(typingTimeout);
+            }
+
+            // Set new timeout to stop typing
+            typingTimeout = setTimeout(() => {
+                stopTyping();
+            }, 1000);
+        }
+
+        function stopTyping() {
+            if (isTyping && socket) {
+                const subjectId = document.getElementById('subjectId').value.trim();
+                const paperId = document.getElementById('paperId').value.trim() || null;
+                
+                socket.emit('typing-stop', { subjectId, paperId });
+                isTyping = false;
+            }
+        }
+
+        function testConnection() {
+            if (socket) {
+                socket.emit('ping');
+            } else {
+                alert('Not connected');
+            }
+        }
+
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+        }
+
+        function updateStatus(text, className) {
+            const status = document.getElementById('status');
+            status.textContent = text;
+            status.className = `status ${className}`;
+        }
+
+        function updateOnlineUsers(users) {
+            const onlineUsersElement = document.getElementById('onlineUsers');
+            if (users.length === 0) {
+                onlineUsersElement.textContent = 'None';
+            } else {
+                onlineUsersElement.textContent = users.map(u => u.userName || u.userId).join(', ');
+            }
+        }
+
+        function updateTypingIndicator(userName, isTyping) {
+            const indicator = document.getElementById('typingIndicator');
+            if (isTyping) {
+                indicator.textContent = `${userName} is typing...`;
+            } else {
+                indicator.textContent = '';
+            }
+        }
+
+        function addMessage(message) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${message.senderId === currentUserId ? 'own-message' : 'other-message'}`;
+            messageDiv.id = `message-${message.id}`;
+            
+            let content = `
+                <div class="message-info">
+                    ${message.senderName || message.senderId} - ${new Date(message.createdAt).toLocaleTimeString()}
+                </div>
+                <div>${message.text}</div>
+            `;
+
+            if (message.replyTo) {
+                content = `
+                    <div class="message-info">
+                        Replying to: ${message.replyTo.originalSenderName}
+                    </div>
+                    <div style="font-size: 0.9em; opacity: 0.7; margin-bottom: 5px;">
+                        "${message.replyTo.originalText}"
+                    </div>
+                ` + content;
+            }
+
+            messageDiv.innerHTML = content;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function addSystemMessage(text) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.style.cssText = 'text-align: center; color: #666; font-style: italic; margin: 5px 0; font-size: 0.9em;';
+            messageDiv.textContent = text;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function removeMessage(messageId) {
+            const messageElement = document.getElementById(`message-${messageId}`);
+            if (messageElement) {
+                messageElement.remove();
+            }
+        }
+
+        // Initialize UI
+        updateStatus('🔴 Not Connected', 'disconnected');
+    </script>
+</body>
+</html>

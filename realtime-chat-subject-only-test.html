@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subject-Only Chat Test</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            background-color: #f5f5f5;
+        }
+        .container { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 10px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+        }
+        .auth-section {
+            border: 2px solid #4CAF50;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        .chat-section {
+            border: 2px solid #2196F3;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            background-color: #f0f8ff;
+        }
+        .messages { 
+            height: 300px; 
+            overflow-y: auto; 
+            border: 1px solid #ddd; 
+            padding: 10px; 
+            margin: 10px 0;
+            background-color: #fafafa;
+        }
+        .message { 
+            margin: 5px 0; 
+            padding: 8px; 
+            background: white; 
+            border-radius: 5px; 
+            border-left: 3px solid #2196F3;
+        }
+        .message.own { 
+            background: #e3f2fd; 
+            border-left-color: #4CAF50; 
+        }
+        .message.system { 
+            background: #fff3e0; 
+            border-left-color: #ff9800; 
+        }
+        input[type="text"], input[type="password"] { 
+            width: 200px; 
+            padding: 8px; 
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button { 
+            padding: 8px 16px; 
+            margin: 5px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+        }
+        .btn-primary { background: #2196F3; color: white; }
+        .btn-success { background: #4CAF50; color: white; }
+        .btn-warning { background: #ff9800; color: white; }
+        .btn-danger { background: #f44336; color: white; }
+        .status {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        .status.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .status.info { background: #cce7ff; color: #004085; border: 1px solid #b3d7ff; }
+        .typing-indicator {
+            font-style: italic;
+            color: #666;
+            padding: 5px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            margin: 5px 0;
+        }
+        .online-users {
+            background: #e8f5e8;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔥 Subject-Only Real-time Chat Test 💬</h1>
+        <p><strong>📚 Note:</strong> This chat system is now simplified to work with <strong>Subject-based discussions only</strong> (no paper IDs needed).</p>
+        
+        <!-- Authentication Section -->
+        <div class="auth-section">
+            <h2>🔐 Authentication</h2>
+            <div>
+                <input type="text" id="userId" placeholder="User ID" value="user123">
+                <input type="password" id="userToken" placeholder="JWT Token (optional for testing)">
+                <button class="btn-primary" onclick="authenticate()">🔑 Authenticate</button>
+            </div>
+            <div class="status" id="authStatus">Not authenticated</div>
+        </div>
+
+        <!-- Chat Section -->
+        <div class="chat-section">
+            <h2>💬 Subject Discussion</h2>
+            <div>
+                <input type="text" id="subjectId" placeholder="Subject ID (e.g. MATH101, CS201)" value="MATH101">
+                <button class="btn-success" onclick="joinChat()">🚀 Join Subject Discussion</button>
+                <button class="btn-warning" onclick="leaveChat()">👋 Leave Discussion</button>
+            </div>
+            <div class="status" id="chatStatus">Not connected to any subject discussion</div>
+
+            <!-- Online Users -->
+            <div class="online-users" id="onlineUsers" style="display: none;">
+                <strong>👥 Online Users:</strong> <span id="usersList">None</span>
+            </div>
+
+            <!-- Messages Display -->
+            <div class="messages" id="messages"></div>
+
+            <!-- Typing Indicator -->
+            <div class="typing-indicator" id="typingIndicator" style="display: none;"></div>
+
+            <!-- Message Input -->
+            <div>
+                <input type="text" id="messageInput" placeholder="Ask a question about this subject..." style="width: 400px;">
+                <button class="btn-primary" onclick="sendMessage()">📤 Send</button>
+                <button class="btn-warning" onclick="startTyping()">✏️ Start Typing</button>
+                <button class="btn-warning" onclick="stopTyping()">🛑 Stop Typing</button>
+            </div>
+
+            <!-- Chat Actions -->
+            <div style="margin-top: 10px;">
+                <button class="btn-success" onclick="getOnlineUsers()">👥 Get Online Users</button>
+                <button class="btn-warning" onclick="clearMessages()">🗑️ Clear Messages</button>
+                <button class="btn-danger" onclick="disconnect()">🔌 Disconnect</button>
+            </div>
+        </div>
+
+        <!-- Connection Logs -->
+        <div class="auth-section">
+            <h2>📋 Connection Logs</h2>
+            <div class="messages" id="logs"></div>
+            <button class="btn-warning" onclick="clearLogs()">🗑️ Clear Logs</button>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Socket.IO client
+        const socket = io('http://localhost:4000', {
+            transports: ['websocket', 'polling']
+        });
+
+        let currentUserId = '';
+        let currentSubjectId = '';
+        let isAuthenticated = false;
+        let isTyping = false;
+
+        // Helper function to add messages
+        function addMessage(text, type = 'message') {
+            const messages = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            messageDiv.innerHTML = `<small>[${new Date().toLocaleTimeString()}]</small> ${text}`;
+            messages.appendChild(messageDiv);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        // Helper function to add logs
+        function addLog(text, type = 'info') {
+            const logs = document.getElementById('logs');
+            const logDiv = document.createElement('div');
+            logDiv.className = `status ${type}`;
+            logDiv.innerHTML = `<small>[${new Date().toLocaleTimeString()}]</small> ${text}`;
+            logs.appendChild(logDiv);
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        // Authentication function
+        function authenticate() {
+            const userId = document.getElementById('userId').value;
+            const token = document.getElementById('userToken').value;
+            
+            if (!userId) {
+                updateAuthStatus('Please enter a User ID', 'error');
+                return;
+            }
+
+            currentUserId = userId;
+            
+            // For testing, we'll use a mock token if none provided
+            const authToken = token || 'mock-jwt-token-for-testing';
+            
+            socket.emit('authenticate', { 
+                token: authToken, 
+                userId: userId 
+            });
+            
+            addLog(`🔑 Attempting authentication for user: ${userId}`, 'info');
+        }
+
+        // Join chat function - subject-only
+        function joinChat() {
+            if (!isAuthenticated) {
+                updateChatStatus('Please authenticate first', 'error');
+                return;
+            }
+
+            const subjectId = document.getElementById('subjectId').value;
+            if (!subjectId) {
+                updateChatStatus('Please enter a Subject ID', 'error');
+                return;
+            }
+
+            currentSubjectId = subjectId;
+            socket.emit('join-chat', { 
+                subjectId: subjectId,
+                userId: currentUserId 
+            });
+            
+            addLog(`🚀 Joining subject discussion: ${subjectId}`, 'info');
+        }
+
+        // Leave chat function
+        function leaveChat() {
+            if (!currentSubjectId) return;
+            
+            socket.emit('leave-chat', { 
+                subjectId: currentSubjectId 
+            });
+            
+            addLog(`👋 Leaving subject discussion: ${currentSubjectId}`, 'info');
+        }
+
+        // Send message function - simplified
+        function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const text = messageInput.value.trim();
+            
+            if (!text || !isAuthenticated || !currentSubjectId) {
+                updateChatStatus('Please authenticate and join a subject discussion first', 'error');
+                return;
+            }
+
+            const messageData = {
+                subjectId: currentSubjectId,
+                text: text,
+                userId: currentUserId,
+                userName: `User_${currentUserId}`,
+                tempId: Date.now() // For message matching
+            };
+
+            socket.emit('send-message', messageData);
+            messageInput.value = '';
+            
+            addLog(`📤 Sent message to ${currentSubjectId}: ${text}`, 'success');
+        }
+
+        // Typing functions - simplified
+        function startTyping() {
+            if (!isAuthenticated || !currentSubjectId || isTyping) return;
+            
+            isTyping = true;
+            socket.emit('typing-start', { 
+                subjectId: currentSubjectId,
+                userName: `User_${currentUserId}` 
+            });
+            
+            addLog(`✏️ Started typing in ${currentSubjectId}`, 'info');
+        }
+
+        function stopTyping() {
+            if (!isAuthenticated || !currentSubjectId || !isTyping) return;
+            
+            isTyping = false;
+            socket.emit('typing-stop', { 
+                subjectId: currentSubjectId 
+            });
+            
+            addLog(`🛑 Stopped typing in ${currentSubjectId}`, 'info');
+        }
+
+        // Get online users function - simplified
+        function getOnlineUsers() {
+            if (!isAuthenticated || !currentSubjectId) return;
+            
+            socket.emit('get-online-users', { 
+                subjectId: currentSubjectId 
+            });
+            
+            addLog(`👥 Requesting online users for ${currentSubjectId}`, 'info');
+        }
+
+        // Update status functions
+        function updateAuthStatus(message, type = 'info') {
+            const status = document.getElementById('authStatus');
+            status.textContent = message;
+            status.className = `status ${type}`;
+        }
+
+        function updateChatStatus(message, type = 'info') {
+            const status = document.getElementById('chatStatus');
+            status.textContent = message;
+            status.className = `status ${type}`;
+        }
+
+        // Clear functions
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+        }
+
+        // Disconnect function
+        function disconnect() {
+            socket.disconnect();
+            isAuthenticated = false;
+            currentSubjectId = '';
+            updateAuthStatus('Disconnected', 'error');
+            updateChatStatus('Disconnected from subject discussion', 'error');
+            addLog('🔌 Disconnected from server', 'error');
+        }
+
+        // Allow Enter key to send message
+        document.getElementById('messageInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Socket.IO Event Listeners
+        socket.on('connect', () => {
+            addLog('🔌 Connected to WebSocket server', 'success');
+        });
+
+        socket.on('disconnect', (reason) => {
+            addLog(`🔌 Disconnected: ${reason}`, 'error');
+            isAuthenticated = false;
+            updateAuthStatus('Connection lost', 'error');
+            updateChatStatus('Disconnected from discussion', 'error');
+        });
+
+        socket.on('authentication-success', (data) => {
+            isAuthenticated = true;
+            updateAuthStatus(`✅ Authenticated as ${data.userId}`, 'success');
+            addLog(`✅ Authentication successful for user: ${data.userId}`, 'success');
+        });
+
+        socket.on('authentication-failed', (data) => {
+            isAuthenticated = false;
+            updateAuthStatus(`❌ Authentication failed: ${data.error}`, 'error');
+            addLog(`❌ Authentication failed: ${data.error}`, 'error');
+        });
+
+        socket.on('joined-chat', (data) => {
+            updateChatStatus(`✅ Joined ${data.subjectId} discussion`, 'success');
+            addLog(`✅ Joined discussion room: ${data.roomName}`, 'success');
+        });
+
+        socket.on('new-message', (data) => {
+            const isOwnMessage = data.senderId === currentUserId;
+            const messageClass = isOwnMessage ? 'own' : 'message';
+            addMessage(`<strong>${data.senderName || data.senderId}:</strong> ${data.text}`, messageClass);
+            
+            if (!isOwnMessage) {
+                addLog(`💬 New message from ${data.senderName || data.senderId}`, 'info');
+            }
+        });
+
+        socket.on('message-sent', (data) => {
+            if (data.success) {
+                addLog(`✅ Message sent successfully (ID: ${data.messageId})`, 'success');
+            } else {
+                addLog(`❌ Failed to send message: ${data.error}`, 'error');
+            }
+        });
+
+        socket.on('message-error', (data) => {
+            addLog(`❌ Message error: ${data.error}`, 'error');
+        });
+
+        socket.on('user-typing', (data) => {
+            const typingIndicator = document.getElementById('typingIndicator');
+            if (data.isTyping && data.userId !== currentUserId) {
+                typingIndicator.textContent = `✏️ ${data.userName || data.userId} is typing...`;
+                typingIndicator.style.display = 'block';
+            } else {
+                typingIndicator.style.display = 'none';
+            }
+        });
+
+        socket.on('online-users', (data) => {
+            const onlineUsersDiv = document.getElementById('onlineUsers');
+            const usersList = document.getElementById('usersList');
+            
+            if (data.users && data.users.length > 0) {
+                const userNames = data.users.map(u => u.userName || u.userId).join(', ');
+                usersList.textContent = `${userNames} (${data.count} total)`;
+                onlineUsersDiv.style.display = 'block';
+            } else {
+                usersList.textContent = 'None';
+                onlineUsersDiv.style.display = 'none';
+            }
+            
+            addLog(`👥 Online users: ${data.count} users in ${data.roomName}`, 'info');
+        });
+
+        socket.on('user-joined', (data) => {
+            if (data.userId !== currentUserId) {
+                addMessage(`👋 ${data.userName || data.userId} joined the discussion`, 'system');
+                addLog(`👋 User joined discussion: ${data.userName || data.userId}`, 'info');
+            }
+        });
+
+        socket.on('user-left', (data) => {
+            if (data.userId !== currentUserId) {
+                addMessage(`👋 User ${data.userId} left the discussion`, 'system');
+                addLog(`👋 User left discussion: ${data.userId}`, 'info');
+            }
+        });
+
+        socket.on('message-deleted', (data) => {
+            addMessage(`🗑️ Message deleted by ${data.deletedBy}`, 'system');
+            addLog(`🗑️ Message deleted: ${data.messageId}`, 'info');
+        });
+
+        socket.on('system-notification', (data) => {
+            addMessage(`🔔 System: ${data.message}`, 'system');
+            addLog(`🔔 System notification: ${data.message}`, 'info');
+        });
+
+        // Initial connection log
+        addLog('🚀 Initializing subject-only chat test...', 'info');
+        addLog('📚 This chat system works with Subject discussions only (no paper IDs)', 'info');
+    </script>
+</body>
+</html>

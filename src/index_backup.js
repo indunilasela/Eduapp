@@ -4200,8 +4200,8 @@ app.post('/chat/:messageId/reply', authenticateToken, async (req, res) => {
     const result = await replyToMessage(messageId, replyData);
     
     if (result.success) {
-      // Broadcast reply via WebSocket to all users in the subject room (subject-only system)
-      const roomName = `subject_${subjectId}`;
+      // Broadcast reply via WebSocket to all users in the room
+      const roomName = `${subjectId}_${paperId || 'general'}`;
       if (global.io) {
         global.io.to(roomName).emit('new-message', {
           ...result.message,
