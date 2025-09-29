@@ -75,8 +75,55 @@ curl -H "Authorization: Bearer ADMIN_TOKEN" \
 http://localhost:4000/admin/chat/stats
 ```
 
+## 📝 NOTES CHAT SYSTEM TESTS
+
+### 10. Send a message to notes chat
+```bash
+curl -X POST http://localhost:4000/notes/notes123/chat \
+-H "Authorization: Bearer YOUR_TOKEN" \
+-H "Content-Type: application/json" \
+-d '{
+  "text": "Great notes! I have a question about the conclusion.",
+  "messageType": "text"
+}'
+```
+
+### 11. Get all messages for notes chat
+```bash
+curl http://localhost:4000/notes/notes123/chat
+```
+
+### 12. Reply to a notes message (replace MESSAGE_ID with actual message ID)
+```bash
+curl -X POST http://localhost:4000/notes-chat/MESSAGE_ID/reply \
+-H "Authorization: Bearer YOUR_TOKEN" \
+-H "Content-Type: application/json" \
+-d '{
+  "text": "Thanks for explaining that concept!",
+  "notesId": "notes123"
+}'
+```
+
+### 13. Get notes chat participants
+```bash
+curl http://localhost:4000/notes/notes123/chat/participants
+```
+
+### 14. Delete a notes message (replace MESSAGE_ID with actual message ID)
+```bash
+curl -X DELETE http://localhost:4000/notes-chat/MESSAGE_ID \
+-H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### 15. Admin: Get notes chat statistics (admin token required)
+```bash
+curl -H "Authorization: Bearer ADMIN_TOKEN" \
+http://localhost:4000/admin/notes-chat/stats
+```
+
 ## Expected Behavior
 
+### Subject Chat System
 1. **Send Message**: Message created with status "Message sent successfully"
 2. **Get Messages**: Returns array of messages in chronological order
 3. **Paper-Specific**: Messages filtered by paperId parameter
@@ -85,8 +132,19 @@ http://localhost:4000/admin/chat/stats
 6. **Delete Permission**: Users can delete own messages, admins can delete any
 7. **Admin Stats**: Comprehensive analytics for chat usage
 
+### Notes Chat System
+1. **Send Notes Message**: Message created with status "Notes chat message sent successfully"
+2. **Get Notes Messages**: Returns array of notes-specific messages in chronological order
+3. **Notes-Specific**: Messages are specific to each notes page (no paperId needed)
+4. **Reply System**: Creates message with replyTo object containing original notes message info
+5. **Participants**: Shows users who have sent messages in the notes chat
+6. **Delete Permission**: Users can delete own messages, admins can delete any
+7. **Admin Stats**: Comprehensive analytics for notes chat usage
+8. **Public Reading**: Anyone can view messages (no auth required for reading)
+
 ## Chat System Features Implemented
 
+### Subject Chat Features
 ✅ **Real-time Messaging**: Send and receive messages instantly  
 ✅ **Paper-Specific Chats**: Contextual discussions for each paper  
 ✅ **Reply Functionality**: WhatsApp-like reply system  
@@ -96,14 +154,46 @@ http://localhost:4000/admin/chat/stats
 ✅ **Message Analytics**: Track engagement and activity  
 ✅ **Smart Positioning**: Support for sender/receiver layout  
 
+### Notes Chat Features
+✅ **Real-time Notes Messaging**: Send and receive messages for specific notes  
+✅ **Notes-Specific Chats**: Separate discussion for each notes page  
+✅ **Reply Functionality**: WhatsApp-like reply system for notes  
+✅ **Admin Controls**: Delete any notes message, view statistics  
+✅ **Permission System**: Users manage own notes messages  
+✅ **Participant Tracking**: See who's active in notes discussions  
+✅ **Message Analytics**: Track notes chat engagement and activity  
+✅ **Public Reading**: Anyone can view notes messages (great for open learning)  
+✅ **Collaborative Learning**: Multiple users can discuss notes content  
+
 ## Database Collections
 
-### chatMessages Collection
+### chatMessages Collection (Subject Chat)
 ```javascript
 {
   id: "timestamp_randomId",
   subjectId: "subject123",
   paperId: "paper456", // null for general subject chat
+  text: "Message content",
+  messageType: "text", // text, reply, image, file
+  senderId: "user123",
+  senderName: "John Doe",
+  senderEmail: "john@example.com",
+  createdAt: timestamp,
+  isDeleted: false,
+  replyTo: { // Only for reply messages
+    messageId: "original_message_id",
+    originalText: "Original message content",
+    originalSenderName: "Original Sender",
+    originalSenderId: "original_user_id"
+  }
+}
+```
+
+### notesChatMessages Collection (Notes Chat)
+```javascript
+{
+  id: "timestamp_randomId",
+  notesId: "notes123", // The specific notes page ID
   text: "Message content",
   messageType: "text", // text, reply, image, file
   senderId: "user123",

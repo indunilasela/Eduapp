@@ -12,7 +12,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { initializeApp } = require('firebase/app');
-const { getFirestore, doc, setDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, connectFirestoreEmulator } = require('firebase/firestore');
+const { getFirestore, doc, setDoc, updateDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, orderBy, limitToLast, startAfter, connectFirestoreEmulator } = require('firebase/firestore');
 const { sendWelcomeEmail, sendPasswordResetEmail, testEmailConnection } = require('./emailService');
 
 const app = express();
@@ -1986,6 +1986,192 @@ async function getAnswerById(answerId) {
 // ========================================
 // CHAT SYSTEM UTILITY FUNCTIONS
 // ========================================
+
+// ============================================
+// NOTES CHAT FUNCTIONS
+// ============================================
+
+async function createNotesChatMessage(messageData) {
+  try {
+    const messageDoc = await addDoc(collection(db, 'notesChatMessages'), {
+      notesId: messageData.notesId,
+      senderId: messageData.senderId,
+      senderName: messageData.senderName || 'Unknown User',
+      senderEmail: messageData.senderEmail || 'Unknown Email', 
+      text: messageData.text,
+      messageType: messageData.messageType || 'text',
+      replyTo: messageData.replyTo || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      isDeleted: false,
+      reactions: {}
+    });
+
+    const messageId = messageDoc.id;
+    const message = {
+      id: messageId,
+      notesId: messageData.notesId,
+      senderId: messageData.senderId,
+      senderName: messageData.senderName || 'Unknown User',
+      text: messageData.text,
+      messageType: messageData.messageType || 'text',
+      replyTo: messageData.replyTo || null,
+      createdAt: new Date(),
+      isDeleted: false,
+      reactions: {}
+    };
+    
+    return { success: true, messageId, message, status: 'Notes chat message sent successfully' };
+  } catch (error) {
+    console.error('❌ Error creating notes chat message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getNotesChatMessages(notesId, lastMessageId = null, limit = 50) {
+  try {
+    // Simplified query to avoid composite index requirement
+    let queryRef = query(
+      collection(db, 'notesChatMessages'),
+      where('notesId', '==', notesId)
+    );
+
+    const snapshot = await getDocs(queryRef);
+    let messages = snapshot.docs
+      .map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate() || new Date()
+      }))
+      .filter(msg => !msg.isDeleted) // Filter out deleted messages in memory
+      .sort((a, b) => a.createdAt - b.createdAt); // Sort by creation time
+
+    // Apply pagination if lastMessageId is provided
+    if (lastMessageId) {
+      const lastMessageIndex = messages.findIndex(msg => msg.id === lastMessageId);
+      if (lastMessageIndex !== -1) {
+        messages = messages.slice(lastMessageIndex + 1);
+      }
+    }
+
+    // Apply limit
+    if (messages.length > limit) {
+      messages = messages.slice(-limit); // Get last N messages
+    }
+
+    return { success: true, messages, totalMessages: messages.length };
+  } catch (error) {
+    console.error('❌ Error getting notes chat messages:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function deleteNotesChatMessage(messageId, userRole, userId) {
+  try {
+    const messageDoc = await getDoc(doc(db, 'notesChatMessages', messageId));
+    
+    if (!messageDoc.exists()) {
+      return { success: false, error: 'Message not found' };
+    }
+
+    const messageData = messageDoc.data();
+    
+    // Check if user can delete (own message or admin)
+    if (messageData.senderId !== userId && userRole !== 'admin') {
+      return { success: false, error: 'Unauthorized to delete this message' };
+    }
+
+    await updateDoc(doc(db, 'notesChatMessages', messageId), {
+      isDeleted: true,
+      deletedAt: new Date(),
+      deletedBy: userId
+    });
+
+    return { success: true, status: 'Notes chat message deleted successfully' };
+  } catch (error) {
+    console.error('❌ Error deleting notes chat message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function replyToNotesMessage(originalMessageId, replyData) {
+  try {
+    // Get original message
+    const originalDoc = await getDoc(doc(db, 'notesChatMessages', originalMessageId));
+    
+    if (!originalDoc.exists()) {
+      return { success: false, error: 'Original message not found' };
+    }
+
+    const originalMessage = originalDoc.data();
+    
+    // Create reply with reference to original
+    const replyMessageData = {
+      ...replyData,
+      replyTo: {
+        messageId: originalMessageId,
+        originalText: originalMessage.text,
+        originalSenderName: originalMessage.senderName,
+        originalSenderId: originalMessage.senderId
+      }
+    };
+
+    return await createNotesChatMessage(replyMessageData);
+  } catch (error) {
+    console.error('❌ Error replying to notes message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getNotesChatParticipants(notesId) {
+  try {
+    const querySnapshot = await getDocs(
+      query(
+        collection(db, 'notesChatMessages'),
+        where('notesId', '==', notesId),
+        where('isDeleted', '==', false)
+      )
+    );
+
+    const participantsMap = new Map();
+    
+    querySnapshot.forEach(doc => {
+      const data = doc.data();
+      if (!participantsMap.has(data.senderId)) {
+        participantsMap.set(data.senderId, {
+          userId: data.senderId,
+          name: data.senderName,
+          email: data.senderEmail,
+          messageCount: 1,
+          lastMessageAt: data.createdAt?.toDate() || new Date()
+        });
+      } else {
+        const existing = participantsMap.get(data.senderId);
+        existing.messageCount += 1;
+        const messageDate = data.createdAt?.toDate() || new Date();
+        if (messageDate > existing.lastMessageAt) {
+          existing.lastMessageAt = messageDate;
+        }
+      }
+    });
+
+    const participants = Array.from(participantsMap.values())
+      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+
+    return { success: true, participants, totalParticipants: participants.length };
+  } catch (error) {
+    console.error('❌ Error getting notes chat participants:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// ============================================
+// SUBJECT CHAT FUNCTIONS (EXISTING)
+// ============================================
+
+// ============================================
+// SUBJECT CHAT FUNCTIONS
+// ============================================
 
 async function createChatMessage(messageData) {
   try {
@@ -4077,8 +4263,326 @@ app.get('/admin/links', authenticateToken, isAdmin, async (req, res) => {
 });
 
 // ========================================
-// CHAT SYSTEM ENDPOINTS
-// ========================================
+// ============================================
+// NOTES CHAT ENDPOINTS
+// ============================================
+
+// Send message to notes chat
+app.post('/notes/:notesId/chat', authenticateToken, async (req, res) => {
+  try {
+    const { notesId } = req.params;
+    const { text, messageType } = req.body;
+    const userId = req.user.userId;
+    
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message text is required'
+      });
+    }
+    
+    if (text.length > 1000) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message too long. Maximum 1000 characters allowed.'
+      });
+    }
+    
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const user = userData.data();
+    
+    const messageData = {
+      notesId,
+      text: text.trim(),
+      messageType: messageType || 'text', // text, image, file
+      senderId: userId,
+      senderName: user.name || user.username || user.email || 'Unknown User',
+      senderEmail: user.email || 'Unknown Email'
+    };
+    
+    const result = await createNotesChatMessage(messageData);
+    
+    if (result.success) {
+      // Broadcast via WebSocket to all users in the notes room
+      const roomName = `notes_${notesId}`;
+      if (global.io) {
+        global.io.to(roomName).emit('new-notes-message', {
+          ...result.message,
+          timestamp: new Date()
+        });
+      }
+      
+      res.status(201).json({
+        success: true,
+        messageId: result.messageId,
+        message: result.message,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Send notes chat message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Reply to a notes chat message
+app.post('/notes-chat/:messageId/reply', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { text, notesId } = req.body;
+    const userId = req.user.userId;
+    
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Reply text is required'
+      });
+    }
+    
+    if (!notesId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Notes ID is required'
+      });
+    }
+    
+    if (text.length > 1000) {
+      return res.status(400).json({
+        success: false,
+        error: 'Reply too long. Maximum 1000 characters allowed.'
+      });
+    }
+    
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const user = userData.data();
+    
+    const replyData = {
+      notesId,
+      text: text.trim(),
+      messageType: 'reply',
+      senderId: userId,
+      senderName: user.name || user.username || user.email || 'Unknown User',
+      senderEmail: user.email || 'Unknown Email'
+    };
+    
+    const result = await replyToNotesMessage(messageId, replyData);
+    
+    if (result.success) {
+      // Broadcast reply via WebSocket to all users in the notes room
+      const roomName = `notes_${notesId}`;
+      if (global.io) {
+        global.io.to(roomName).emit('new-notes-message', {
+          ...result.message,
+          timestamp: new Date()
+        });
+      }
+      
+      res.status(201).json({
+        success: true,
+        messageId: result.messageId,
+        message: result.message,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Reply to notes message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get notes chat messages
+app.get('/notes/:notesId/chat', async (req, res) => {
+  try {
+    const { notesId } = req.params;
+    const { limit = 50, lastMessageId } = req.query;
+    
+    const result = await getNotesChatMessages(notesId, lastMessageId, parseInt(limit));
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        messages: result.messages,
+        totalMessages: result.totalMessages
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get notes chat messages error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get notes chat participants
+app.get('/notes/:notesId/chat/participants', async (req, res) => {
+  try {
+    const { notesId } = req.params;
+    
+    const result = await getNotesChatParticipants(notesId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        participants: result.participants,
+        totalParticipants: result.totalParticipants
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get notes chat participants error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete notes chat message
+app.delete('/notes-chat/:messageId', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role || 'user';
+    
+    const result = await deleteNotesChatMessage(messageId, userRole, userId);
+    
+    if (result.success) {
+      // Broadcast message deletion via WebSocket
+      if (global.io) {
+        global.io.emit('notes-message-deleted', {
+          messageId,
+          deletedBy: userId,
+          timestamp: new Date()
+        });
+      }
+      
+      res.json({
+        success: true,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Delete notes chat message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Admin: Get notes chat statistics
+app.get('/admin/notes-chat/stats', authenticateToken, async (req, res) => {
+  try {
+    const userRole = req.user.role || 'user';
+    
+    if (userRole !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Admin access required'
+      });
+    }
+    
+    // Get total messages
+    const totalMessagesSnapshot = await getDocs(
+      query(
+        collection(db, 'notesChatMessages'),
+        where('isDeleted', '==', false)
+      )
+    );
+    
+    // Get messages from last 24 hours
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    const recentMessagesSnapshot = await getDocs(
+      query(
+        collection(db, 'notesChatMessages'),
+        where('isDeleted', '==', false),
+        where('createdAt', '>=', yesterday)
+      )
+    );
+    
+    // Get unique users who sent messages
+    const userIds = new Set();
+    const notesWithMessages = new Set();
+    
+    totalMessagesSnapshot.forEach(doc => {
+      const data = doc.data();
+      userIds.add(data.senderId);
+      notesWithMessages.add(data.notesId);
+    });
+    
+    res.json({
+      success: true,
+      stats: {
+        totalMessages: totalMessagesSnapshot.size,
+        totalActiveUsers: userIds.size,
+        totalNotesWithMessages: notesWithMessages.size,
+        messagesLast24h: recentMessagesSnapshot.size,
+        lastUpdated: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('❌ Get notes chat stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ============================================
+// SUBJECT CHAT ENDPOINTS
+// ============================================
 
 // Send a chat message to a subject discussion
 app.post('/subjects/:subjectId/chat', authenticateToken, async (req, res) => {
