@@ -1,0 +1,502 @@
+{
+	"info": {
+		"_postman_id": "subject-mgmt-001",
+		"name": "EduApp Subject Management API",
+		"description": "Complete collection for testing EduApp subject management endpoints including user and admin operations",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "User Signup",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"testuser\",\n  \"email\": \"testuser@example.com\",\n  \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/signup",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "signup"]
+						}
+					}
+				},
+				{
+					"name": "User Signin",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response.success && response.token) {",
+									"        pm.environment.set('authToken', response.token);",
+									"        console.log('Token saved:', response.token);",
+									"    }",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"testuser@example.com\",\n  \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/signin",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "signin"]
+						}
+					}
+				},
+				{
+					"name": "Admin Signin",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response.success && response.token) {",
+									"        pm.environment.set('adminToken', response.token);",
+									"        console.log('Admin token saved:', response.token);",
+									"    }",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"i.asela016@gmail.com\",\n  \"password\": \"admin123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/signin",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "signin"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Subject Management - User",
+			"item": [
+				{
+					"name": "Create Subject - Full Details",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    if (response.success && response.subjectId) {",
+									"        pm.environment.set('subjectId', response.subjectId);",
+									"        console.log('Subject ID saved:', response.subjectId);",
+									"    }",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"Object-Oriented Programming\",\n  \"grade\": \"BSc Year 2\",\n  \"school\": \"University of Moratuwa\",\n  \"description\": \"Learn OOP concepts including inheritance, polymorphism, and encapsulation\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/create",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "create"]
+						}
+					}
+				},
+				{
+					"name": "Create Subject - Required Fields Only",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"English Literature\",\n  \"grade\": \"A Level\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/create",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "create"]
+						}
+					}
+				},
+				{
+					"name": "Create Subject - Missing Required Field (Should Fail)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"grade\": \"Grade 11\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/create",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "create"]
+						}
+					}
+				},
+				{
+					"name": "Get My Subjects",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/subjects/my",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "my"]
+						}
+					}
+				},
+				{
+					"name": "Get Approved Subjects (Public)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/subjects",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Subject Management - Admin",
+			"item": [
+				{
+					"name": "Get Pending Subjects",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/subjects/pending",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "subjects", "pending"]
+						}
+					}
+				},
+				{
+					"name": "Get All Subjects",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/subjects",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "subjects"]
+						}
+					}
+				},
+				{
+					"name": "Approve Subject",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/subjects/{{subjectId}}/approve",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "subjects", "{{subjectId}}", "approve"]
+						}
+					}
+				},
+				{
+					"name": "Reject Subject",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/subjects/{{subjectId}}/reject",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "subjects", "{{subjectId}}", "reject"]
+						}
+					}
+				},
+				{
+					"name": "Delete Subject",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/subjects/{{subjectId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "subjects", "{{subjectId}}"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Security Tests",
+			"item": [
+				{
+					"name": "Admin Endpoint Without Token (Should Fail)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/subjects/pending",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "subjects", "pending"]
+						}
+					}
+				},
+				{
+					"name": "Admin Endpoint With User Token (Should Fail)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/admin/subjects/pending",
+							"host": ["{{baseUrl}}"],
+							"path": ["admin", "subjects", "pending"]
+						}
+					}
+				},
+				{
+					"name": "Create Subject Without Token (Should Fail)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"Test Subject\",\n  \"grade\": \"Test Grade\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/create",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "create"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Sample Test Data",
+			"item": [
+				{
+					"name": "Create Mathematics Subject",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"Mathematics\",\n  \"grade\": \"Grade 10\",\n  \"school\": \"Royal College\",\n  \"description\": \"Advanced mathematics covering algebra, geometry, and trigonometry\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/create",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "create"]
+						}
+					}
+				},
+				{
+					"name": "Create Physics Subject",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"Physics\",\n  \"grade\": \"A Level\",\n  \"school\": \"Trinity College\",\n  \"description\": \"Mechanics, waves, electricity and magnetism\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/create",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "create"]
+						}
+					}
+				},
+				{
+					"name": "Create Chemistry Subject",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{authToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"Chemistry\",\n  \"grade\": \"Grade 11\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/subjects/create",
+							"host": ["{{baseUrl}}"],
+							"path": ["subjects", "create"]
+						}
+					}
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:4000",
+			"type": "string"
+		},
+		{
+			"key": "authToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "adminToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "subjectId",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

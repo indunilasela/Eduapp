@@ -1,15 +1,23 @@
 # EduApp Backend API
 
-A Node.js Express backend with Firebase Firestore integration for user authentication and data management.
+A Node.js Express backend with Firebase Firestore integration for user authentication, profile management, subject management with admin approval system, paper management, and answer management system.
 
 ## 🚀 Features
 
 - **User Authentication**: Signup and signin with JWT tokens
-- **Password Security**: Bcrypt password hashing
+- **Password Security**: Bcrypt password hashing with OTP-based password reset
 - **Firebase Integration**: Firestore database for user data
+- **Profile Management**: Profile image upload, update, and delete functionality
+- **Subject Management**: Create subjects with admin approval workflow
+- **Paper Management**: Upload, view, download PDF papers (past papers & model papers)
+- **Answer Management**: Upload, view, download PDF answer files for papers
+- **Admin System**: Admin-only endpoints for subject approval and paper/answer management
+- **Email Service**: Welcome emails and OTP delivery via nodemailer
+- **File Management**: PDF upload with validation and secure serving
 - **Input Validation**: Email, password, and user data validation
 - **Error Handling**: Comprehensive error responses with solutions
 - **API Documentation**: Complete Postman collection included
+- **Mobile Support**: CORS enabled for React Native mobile app integration
 
 ## 🛠️ Tech Stack
 
@@ -17,6 +25,8 @@ A Node.js Express backend with Firebase Firestore integration for user authentic
 - **Database**: Firebase Firestore
 - **Authentication**: JWT (JSON Web Tokens)
 - **Password Hashing**: bcryptjs
+- **File Upload**: multer (profile images, PDF papers)
+- **Email Service**: nodemailer with Gmail SMTP
 - **Validation**: validator.js
 - **Development**: nodemon
 
@@ -78,6 +88,69 @@ JWT_SECRET=your-super-secret-jwt-key
 }
 ```
 
+### Password Reset (OTP-based)
+- **POST** `/auth/forgot-password` - Request password reset OTP
+- **POST** `/auth/verify-otp` - Verify OTP code
+- **POST** `/auth/reset-password` - Set new password after OTP verification
+
+### Username Endpoint
+- **GET** `/auth/username` - Get username only (requires authentication)
+
+### Profile Image Management
+- **POST** `/auth/profile-image/upload` - Upload profile image
+- **PUT** `/auth/profile-image/update` - Update existing profile image
+- **DELETE** `/auth/profile-image/delete` - Delete profile image
+- **GET** `/auth/profile-image` - Get current profile image
+
+### Subject Management
+#### User Endpoints
+- **POST** `/subjects/create` - Create new subject (requires authentication)
+- **GET** `/subjects` - Get all approved subjects (public)
+- **GET** `/subjects/my` - Get user's own subjects (requires authentication)
+
+#### Admin Endpoints (Admin only: i.asela016@gmail.com)
+- **GET** `/admin/subjects/pending` - Get pending subjects for approval
+- **GET** `/admin/subjects` - Get all subjects (all statuses)
+- **PUT** `/admin/subjects/:id/approve` - Approve a subject
+- **PUT** `/admin/subjects/:id/reject` - Reject a subject
+- **DELETE** `/admin/subjects/:id` - Delete a subject
+
+### Paper Management
+#### Upload & View Papers (PDF files)
+- **POST** `/subjects/:id/papers/upload` - Upload paper (past paper or model paper)
+- **GET** `/subjects/:id/papers` - Get all papers for subject
+- **GET** `/subjects/:id/papers/past` - Get past papers only
+- **GET** `/subjects/:id/papers/model` - Get model papers only
+
+#### Download & Manage Papers
+- **GET** `/papers/:id/download` - Download paper file
+- **GET** `/papers/:id/view` - View paper in browser
+- **DELETE** `/papers/:id` - Delete paper (admin or uploader only)
+
+### Answer Management
+#### Upload & View Answers (PDF files)
+- **POST** `/papers/:paperId/answers/upload` - Upload answer file for paper
+- **GET** `/papers/:paperId/answers` - Get all answers for a specific paper (public)
+
+#### Download & Manage Answers
+- **GET** `/answers/:answerId/download` - Download answer file (public)
+- **DELETE** `/answers/:answerId` - Delete answer (admin or uploader only)
+
+**Answer Upload Requirements:**
+- File Type: PDF only (max 10MB)
+- Required: title, answerFile (PDF)
+- Optional: description
+- Permission: Any authenticated user can upload
+- Viewing/Download: Public access (no authentication required)
+- Deletion: Admin and uploader only
+
+**Paper Upload Requirements:**
+- File Type: PDF only (max 10MB)
+- Required: type ("past paper" or "model paper"), name, year
+- Optional: title (for model papers)
+- Permission: Any authenticated user can upload
+- Deletion: Admin and uploader only
+
 ### Other Routes
 - **GET** `/` - Server info and available endpoints
 - **GET** `/test-firebase` - Test Firebase connection
@@ -87,9 +160,17 @@ JWT_SECRET=your-super-secret-jwt-key
 ## 📝 Testing
 
 ### Using Postman
-1. Import the collection: `Eduback_Auth_API.postman_collection.json`
+1. Import the collections:
+   - `Eduback_Auth_API.postman_collection.json` (Authentication endpoints)
+   - `EduApp_Subject_Management.postman_collection.json` (Subject management endpoints)
+   - `EduApp_Paper_Management.postman_collection.json` (Paper management endpoints)
+   - `Postman_Answer_Management_Collection.json` (Answer management endpoints)
 2. Set base URL to: `http://localhost:4000`
-3. Follow the test cases in `POSTMAN_TESTING_GUIDE.md`
+3. Follow the test cases in:
+   - `POSTMAN_TESTING_GUIDE.md` (Authentication testing)
+   - `SUBJECT_MANAGEMENT_API_GUIDE.md` (Subject management testing)
+   - `PAPER_MANAGEMENT_API_GUIDE.md` (Paper management testing)
+   - `Answer_Management_Testing_Guide.md` (Answer management testing)
 
 ### Using cURL
 ```bash
@@ -125,12 +206,23 @@ backend/
 ├── src/
 │   └── index.js                 # Main server file
 ├── config/                      # Configuration files
+├── uploads/
+│   ├── profile-images/         # User profile images
+│   ├── papers/                 # PDF paper files
+│   └── answers/                # PDF answer files
 ├── .github/                     # GitHub workflows
 ├── .vscode/                     # VS Code settings
 ├── AUTH_TESTING.md             # Authentication testing guide
 ├── FIREBASE_SETUP_GUIDE.md     # Firebase setup instructions
 ├── POSTMAN_TESTING_GUIDE.md    # Postman testing guide
-├── Eduback_Auth_API.postman_collection.json  # Postman collection
+├── SUBJECT_MANAGEMENT_API_GUIDE.md # Subject management guide
+├── PAPER_MANAGEMENT_API_GUIDE.md   # Paper management guide
+├── Answer_Management_API_Documentation.md # Answer management API docs
+├── Answer_Management_Testing_Guide.md     # Answer management testing
+├── Eduback_Auth_API.postman_collection.json          # Auth Postman collection
+├── EduApp_Subject_Management.postman_collection.json  # Subject Postman collection
+├── EduApp_Paper_Management.postman_collection.json    # Paper Postman collection
+├── Postman_Answer_Management_Collection.json          # Answer Postman collection
 ├── package.json                # Dependencies and scripts
 └── README.md                   # This file
 ```

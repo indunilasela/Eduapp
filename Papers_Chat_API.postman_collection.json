@@ -1,0 +1,484 @@
+{
+  "info": {
+    "name": "Papers Chat API - Complete Collection",
+    "description": "Complete Postman collection for Papers Chat System with all 8 endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{auth_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:4000",
+      "type": "string"
+    },
+    {
+      "key": "auth_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "paper_id",
+      "value": "paper123",
+      "type": "string"
+    },
+    {
+      "key": "message_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "🔐 Authentication",
+      "item": [
+        {
+          "name": "Login - Get JWT Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.to.have.status(200)) {",
+                  "    const responseJson = pm.response.json();",
+                  "    if (responseJson.token) {",
+                  "        pm.collectionVariables.set('auth_token', responseJson.token);",
+                  "        console.log('✅ Token saved to collection variables');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"your_email@example.com\",\n  \"password\": \"your_password\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/signin",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "signin"]
+            },
+            "description": "Login to get JWT token for authenticated endpoints"
+          }
+        }
+      ]
+    },
+    {
+      "name": "📄 Papers Chat - Original Format",
+      "item": [
+        {
+          "name": "1. Send Message to Papers Chat",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.to.have.status(201)) {",
+                  "    const responseJson = pm.response.json();",
+                  "    if (responseJson.messageId) {",
+                  "        pm.collectionVariables.set('message_id', responseJson.messageId);",
+                  "        console.log('✅ Message ID saved: ' + responseJson.messageId);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"I have a question about this research methodology...\",\n  \"messageType\": \"text\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/papers/{{paper_id}}/chat",
+              "host": ["{{base_url}}"],
+              "path": ["papers", "{{paper_id}}", "chat"]
+            },
+            "description": "Send a new message to papers chat. Requires authentication."
+          }
+        },
+        {
+          "name": "2. Get Papers Chat Messages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/papers/{{paper_id}}/chat?limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["papers", "{{paper_id}}", "chat"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Number of messages to retrieve"
+                },
+                {
+                  "key": "lastMessageId",
+                  "value": "",
+                  "description": "For pagination",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get all messages for a specific paper. No authentication required."
+          }
+        },
+        {
+          "name": "3. Reply to Papers Chat Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Great question! The methodology follows these principles...\",\n  \"paperId\": \"{{paper_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/papers-chat/{{message_id}}/reply",
+              "host": ["{{base_url}}"],
+              "path": ["papers-chat", "{{message_id}}", "reply"]
+            },
+            "description": "Reply to a specific papers chat message. Requires authentication and message ID."
+          }
+        },
+        {
+          "name": "4. Get Papers Chat Participants",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/papers/{{paper_id}}/chat/participants",
+              "host": ["{{base_url}}"],
+              "path": ["papers", "{{paper_id}}", "chat", "participants"]
+            },
+            "description": "Get all participants in a papers chat. No authentication required."
+          }
+        },
+        {
+          "name": "5. Delete Papers Chat Message",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/papers-chat/{{message_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["papers-chat", "{{message_id}}"]
+            },
+            "description": "Delete a papers chat message. Only message owner or admin can delete."
+          }
+        },
+        {
+          "name": "6. Admin - Get Papers Chat Statistics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/papers-chat/stats",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "papers-chat", "stats"]
+            },
+            "description": "Get papers chat statistics. Admin access required."
+          }
+        }
+      ]
+    },
+    {
+      "name": "📱 Papers Chat - Mobile Format",
+      "item": [
+        {
+          "name": "7. Get Papers Messages (Mobile)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/papers/{{paper_id}}/messages?limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["papers", "{{paper_id}}", "messages"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Number of messages to retrieve"
+                },
+                {
+                  "key": "lastMessageId",
+                  "value": "",
+                  "description": "For pagination",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Mobile compatible endpoint to get papers messages. No authentication required."
+          }
+        },
+        {
+          "name": "8. Send Papers Message (Mobile)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"This paper provides excellent insights into the topic!\",\n  \"messageType\": \"text\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/papers/{{paper_id}}/messages",
+              "host": ["{{base_url}}"],
+              "path": ["papers", "{{paper_id}}", "messages"]
+            },
+            "description": "Mobile compatible endpoint to send papers message. Requires authentication."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🧪 Test Workflows",
+      "item": [
+        {
+          "name": "Complete Test Flow",
+          "item": [
+            {
+              "name": "Step 1: Login",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test('Login successful', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "if (pm.response.to.have.status(200)) {",
+                      "    const responseJson = pm.response.json();",
+                      "    if (responseJson.token) {",
+                      "        pm.collectionVariables.set('auth_token', responseJson.token);",
+                      "    }",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"your_email@example.com\",\n  \"password\": \"your_password\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/auth/signin",
+                  "host": ["{{base_url}}"],
+                  "path": ["auth", "signin"]
+                }
+              }
+            },
+            {
+              "name": "Step 2: Send Test Message",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test('Message sent successfully', function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "",
+                      "if (pm.response.to.have.status(201)) {",
+                      "    const responseJson = pm.response.json();",
+                      "    if (responseJson.messageId) {",
+                      "        pm.collectionVariables.set('message_id', responseJson.messageId);",
+                      "    }",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{auth_token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Test message for papers chat system!\",\n  \"messageType\": \"text\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/papers/{{paper_id}}/messages",
+                  "host": ["{{base_url}}"],
+                  "path": ["papers", "{{paper_id}}", "messages"]
+                }
+              }
+            },
+            {
+              "name": "Step 3: Get Messages",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test('Messages retrieved successfully', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Response has messages array', function () {",
+                      "    const responseJson = pm.response.json();",
+                      "    pm.expect(responseJson).to.have.property('messages');",
+                      "    pm.expect(responseJson.messages).to.be.an('array');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/papers/{{paper_id}}/messages",
+                  "host": ["{{base_url}}"],
+                  "path": ["papers", "{{paper_id}}", "messages"]
+                }
+              }
+            },
+            {
+              "name": "Step 4: Reply to Message",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test('Reply sent successfully', function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "",
+                      "pm.test('Reply has correct message type', function () {",
+                      "    const responseJson = pm.response.json();",
+                      "    pm.expect(responseJson.message.messageType).to.eql('reply');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{auth_token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"This is a test reply to the papers chat message!\",\n  \"paperId\": \"{{paper_id}}\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/papers-chat/{{message_id}}/reply",
+                  "host": ["{{base_url}}"],
+                  "path": ["papers-chat", "{{message_id}}", "reply"]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Auto-set timestamp for dynamic data",
+          "pm.globals.set('timestamp', Date.now());"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global test for all requests",
+          "pm.test('Response time is less than 5000ms', function () {",
+          "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+          "});",
+          "",
+          "// Log response for debugging",
+          "console.log('Response Status:', pm.response.status);",
+          "console.log('Response Body:', pm.response.text());"
+        ]
+      }
+    }
+  ]
+}
