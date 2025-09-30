@@ -2166,6 +2166,185 @@ async function getNotesChatParticipants(notesId) {
 }
 
 // ============================================
+// VIDEO PAGE CHAT FUNCTIONS
+// ============================================
+
+async function createVideoPageChatMessage(messageData) {
+  try {
+    const messageDoc = await addDoc(collection(db, 'videoPageChatMessages'), {
+      videoId: messageData.videoId,
+      senderId: messageData.senderId,
+      senderName: messageData.senderName || 'Unknown User',
+      senderEmail: messageData.senderEmail || 'Unknown Email', 
+      text: messageData.text,
+      messageType: messageData.messageType || 'text',
+      replyTo: messageData.replyTo || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      isDeleted: false,
+      reactions: {}
+    });
+
+    const messageId = messageDoc.id;
+    const message = {
+      id: messageId,
+      videoId: messageData.videoId,
+      senderId: messageData.senderId,
+      senderName: messageData.senderName || 'Unknown User',
+      text: messageData.text,
+      messageType: messageData.messageType || 'text',
+      replyTo: messageData.replyTo || null,
+      createdAt: new Date(),
+      isDeleted: false,
+      reactions: {}
+    };
+    
+    return { success: true, messageId, message, status: 'Video page chat message sent successfully' };
+  } catch (error) {
+    console.error('❌ Error creating video page chat message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getVideoPageChatMessages(videoId, lastMessageId = null, limit = 50) {
+  try {
+    // Simplified query to avoid composite index requirement
+    let queryRef = query(
+      collection(db, 'videoPageChatMessages'),
+      where('videoId', '==', videoId)
+    );
+
+    const snapshot = await getDocs(queryRef);
+    let messages = snapshot.docs
+      .map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate() || new Date()
+      }))
+      .filter(msg => !msg.isDeleted) // Filter out deleted messages in memory
+      .sort((a, b) => a.createdAt - b.createdAt); // Sort by creation time
+
+    // Apply pagination if lastMessageId is provided
+    if (lastMessageId) {
+      const lastMessageIndex = messages.findIndex(msg => msg.id === lastMessageId);
+      if (lastMessageIndex !== -1) {
+        messages = messages.slice(lastMessageIndex + 1);
+      }
+    }
+
+    // Apply limit
+    if (messages.length > limit) {
+      messages = messages.slice(-limit); // Get last N messages
+    }
+
+    return { success: true, messages, totalMessages: messages.length };
+  } catch (error) {
+    console.error('❌ Error getting video page chat messages:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function deleteVideoPageChatMessage(messageId, userRole, userId) {
+  try {
+    const messageDoc = await getDoc(doc(db, 'videoPageChatMessages', messageId));
+    
+    if (!messageDoc.exists()) {
+      return { success: false, error: 'Message not found' };
+    }
+
+    const messageData = messageDoc.data();
+    
+    // Check if user can delete (own message or admin)
+    if (messageData.senderId !== userId && userRole !== 'admin') {
+      return { success: false, error: 'Unauthorized to delete this message' };
+    }
+
+    await updateDoc(doc(db, 'videoPageChatMessages', messageId), {
+      isDeleted: true,
+      deletedAt: new Date(),
+      deletedBy: userId
+    });
+
+    return { success: true, status: 'Video page chat message deleted successfully' };
+  } catch (error) {
+    console.error('❌ Error deleting video page chat message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function replyToVideoPageMessage(originalMessageId, replyData) {
+  try {
+    // Get original message to extract videoId
+    const originalDoc = await getDoc(doc(db, 'videoPageChatMessages', originalMessageId));
+    
+    if (!originalDoc.exists()) {
+      return { success: false, error: 'Original message not found' };
+    }
+
+    const originalMessage = originalDoc.data();
+    
+    // Create reply with reference to original and inherit videoId
+    const replyMessageData = {
+      ...replyData,
+      videoId: originalMessage.videoId, // Get videoId from original message
+      replyTo: {
+        messageId: originalMessageId,
+        originalText: originalMessage.text,
+        originalSenderName: originalMessage.senderName,
+        originalSenderId: originalMessage.senderId
+      }
+    };
+
+    return await createVideoPageChatMessage(replyMessageData);
+  } catch (error) {
+    console.error('❌ Error replying to video page message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getVideoPageChatParticipants(videoId) {
+  try {
+    const querySnapshot = await getDocs(
+      query(
+        collection(db, 'videoPageChatMessages'),
+        where('videoId', '==', videoId),
+        where('isDeleted', '==', false)
+      )
+    );
+
+    const participantsMap = new Map();
+    
+    querySnapshot.forEach(doc => {
+      const data = doc.data();
+      if (!participantsMap.has(data.senderId)) {
+        participantsMap.set(data.senderId, {
+          userId: data.senderId,
+          name: data.senderName,
+          email: data.senderEmail,
+          messageCount: 1,
+          lastMessageAt: data.createdAt?.toDate() || new Date()
+        });
+      } else {
+        const existing = participantsMap.get(data.senderId);
+        existing.messageCount += 1;
+        const messageDate = data.createdAt?.toDate() || new Date();
+        if (messageDate > existing.lastMessageAt) {
+          existing.lastMessageAt = messageDate;
+        }
+      }
+    });
+
+    const participants = Array.from(participantsMap.values())
+      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+
+    return { success: true, participants, totalParticipants: participants.length };
+  } catch (error) {
+    console.error('❌ Error getting video page chat participants:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// ============================================
 // SUBJECT CHAT FUNCTIONS (EXISTING)
 // ============================================
 
@@ -4581,6 +4760,471 @@ app.get('/admin/notes-chat/stats', authenticateToken, async (req, res) => {
 });
 
 // ============================================
+// VIDEO PAGE CHAT ENDPOINTS
+// ============================================
+
+// Send message to video page chat
+app.post('/videos/:videoId/chat', authenticateToken, async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    const { text, messageType } = req.body;
+    const userId = req.user.userId;
+    
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message text is required'
+      });
+    }
+    
+    if (text.length > 1000) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message too long. Maximum 1000 characters allowed.'
+      });
+    }
+    
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const user = userData.data();
+    
+    const messageData = {
+      videoId,
+      text: text.trim(),
+      messageType: messageType || 'text', // text, image, file
+      senderId: userId,
+      senderName: user.name || user.username || user.email || 'Unknown User',
+      senderEmail: user.email || 'Unknown Email'
+    };
+    
+    const result = await createVideoPageChatMessage(messageData);
+    
+    if (result.success) {
+      // Broadcast via WebSocket to all users in the video page room
+      const roomName = `video_${videoId}`;
+      if (global.io) {
+        global.io.to(roomName).emit('new-video-message', {
+          ...result.message,
+          timestamp: new Date()
+        });
+      }
+      
+      res.status(201).json({
+        success: true,
+        messageId: result.messageId,
+        message: result.message,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Send video page chat message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get video page chat messages
+app.get('/videos/:videoId/chat', async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    const { limit = 50, lastMessageId } = req.query;
+    
+    const result = await getVideoPageChatMessages(videoId, lastMessageId, parseInt(limit));
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        messages: result.messages,
+        totalMessages: result.totalMessages
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get video page chat messages error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get video page chat participants
+app.get('/videos/:videoId/chat/participants', async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    
+    const result = await getVideoPageChatParticipants(videoId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        participants: result.participants,
+        totalParticipants: result.totalParticipants
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get video page chat participants error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Reply to a video page chat message
+app.post('/video-page-chat/:messageId/reply', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { text } = req.body; // No videoId needed - gets it from original message
+    const userId = req.user.userId;
+    
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Reply text is required'
+      });
+    }
+    
+    if (text.length > 1000) {
+      return res.status(400).json({
+        success: false,
+        error: 'Reply too long. Maximum 1000 characters allowed.'
+      });
+    }
+    
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const user = userData.data();
+    
+    const replyData = {
+      text: text.trim(),
+      messageType: 'reply',
+      senderId: userId,
+      senderName: user.name || user.username || user.email || 'Unknown User',
+      senderEmail: user.email || 'Unknown Email'
+    };
+    
+    const result = await replyToVideoPageMessage(messageId, replyData);
+    
+    if (result.success) {
+      // Get videoId from the reply result to broadcast to correct room
+      const videoId = result.message.videoId;
+      const roomName = `video_${videoId}`;
+      if (global.io) {
+        global.io.to(roomName).emit('new-video-message', {
+          ...result.message,
+          timestamp: new Date()
+        });
+      }
+      
+      res.status(201).json({
+        success: true,
+        messageId: result.messageId,
+        message: result.message,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Reply to video page message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete video page chat message
+app.delete('/video-page-chat/:messageId', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role || 'user';
+    
+    const result = await deleteVideoPageChatMessage(messageId, userRole, userId);
+    
+    if (result.success) {
+      // Broadcast message deletion via WebSocket
+      if (global.io) {
+        global.io.emit('video-message-deleted', {
+          messageId,
+          deletedBy: userId,
+          timestamp: new Date()
+        });
+      }
+      
+      res.json({
+        success: true,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Delete video page chat message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Admin: Get video page chat statistics
+app.get('/admin/video-page-chat/stats', authenticateToken, async (req, res) => {
+  try {
+    const userRole = req.user.role || 'user';
+    
+    if (userRole !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Admin access required'
+      });
+    }
+    
+    // Get total messages
+    const totalMessagesSnapshot = await getDocs(
+      query(
+        collection(db, 'videoPageChatMessages'),
+        where('isDeleted', '==', false)
+      )
+    );
+    
+    // Get messages from last 24 hours
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    const recentMessagesSnapshot = await getDocs(
+      query(
+        collection(db, 'videoPageChatMessages'),
+        where('isDeleted', '==', false),
+        where('createdAt', '>=', yesterday)
+      )
+    );
+    
+    // Get unique users who sent messages
+    const userIds = new Set();
+    const videosWithMessages = new Set();
+    
+    totalMessagesSnapshot.forEach(doc => {
+      const data = doc.data();
+      userIds.add(data.senderId);
+      videosWithMessages.add(data.videoId);
+    });
+    
+    res.json({
+      success: true,
+      stats: {
+        totalMessages: totalMessagesSnapshot.size,
+        totalActiveUsers: userIds.size,
+        totalVideosWithMessages: videosWithMessages.size,
+        messagesLast24h: recentMessagesSnapshot.size,
+        lastUpdated: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('❌ Get video page chat stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get individual video page chat statistics (Admin only)
+app.get('/videos/:videoId/chat/stats', authenticateToken, async (req, res) => {
+  try {
+    const userRole = req.user.role || 'user';
+    
+    if (userRole !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Admin access required'
+      });
+    }
+
+    const { videoId } = req.params;
+    
+    // Get all messages for this specific video
+    const totalMessagesSnapshot = await getDocs(
+      query(
+        collection(db, 'videoPageChatMessages'),
+        where('videoId', '==', videoId),
+        where('isDeleted', '==', false)
+      )
+    );
+    
+    // Get messages from last 24 hours for this video
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    const recentMessagesSnapshot = await getDocs(
+      query(
+        collection(db, 'videoPageChatMessages'),
+        where('videoId', '==', videoId),
+        where('isDeleted', '==', false),
+        where('createdAt', '>=', yesterday)
+      )
+    );
+
+    // Get messages from last 7 days for this video
+    const lastWeek = new Date();
+    lastWeek.setDate(lastWeek.getDate() - 7);
+    
+    const weeklyMessagesSnapshot = await getDocs(
+      query(
+        collection(db, 'videoPageChatMessages'),
+        where('videoId', '==', videoId),
+        where('isDeleted', '==', false),
+        where('createdAt', '>=', lastWeek)
+      )
+    );
+    
+    // Analyze participants and activity
+    const participantsMap = new Map();
+    const messagesByHour = new Array(24).fill(0);
+    const messagesByDay = new Array(7).fill(0);
+    let totalReplies = 0;
+    let oldestMessageDate = null;
+    let newestMessageDate = null;
+    
+    totalMessagesSnapshot.forEach(doc => {
+      const data = doc.data();
+      const messageDate = data.createdAt?.toDate() || new Date();
+      
+      // Track participants
+      if (!participantsMap.has(data.senderId)) {
+        participantsMap.set(data.senderId, {
+          userId: data.senderId,
+          name: data.senderName,
+          email: data.senderEmail,
+          messageCount: 1,
+          lastMessageAt: messageDate,
+          replyCount: data.replyTo ? 1 : 0
+        });
+      } else {
+        const existing = participantsMap.get(data.senderId);
+        existing.messageCount += 1;
+        if (data.replyTo) existing.replyCount += 1;
+        if (messageDate > existing.lastMessageAt) {
+          existing.lastMessageAt = messageDate;
+        }
+      }
+      
+      // Count replies
+      if (data.replyTo) {
+        totalReplies += 1;
+      }
+      
+      // Track message timing for activity analysis
+      const hour = messageDate.getHours();
+      const dayOfWeek = messageDate.getDay();
+      messagesByHour[hour] += 1;
+      messagesByDay[dayOfWeek] += 1;
+      
+      // Track oldest and newest messages
+      if (!oldestMessageDate || messageDate < oldestMessageDate) {
+        oldestMessageDate = messageDate;
+      }
+      if (!newestMessageDate || messageDate > newestMessageDate) {
+        newestMessageDate = messageDate;
+      }
+    });
+    
+    const participants = Array.from(participantsMap.values())
+      .sort((a, b) => b.messageCount - a.messageCount);
+    
+    // Calculate engagement metrics
+    const totalMessages = totalMessagesSnapshot.size;
+    const totalParticipants = participants.length;
+    const averageMessagesPerUser = totalParticipants > 0 ? (totalMessages / totalParticipants).toFixed(2) : 0;
+    const replyRate = totalMessages > 0 ? ((totalReplies / totalMessages) * 100).toFixed(1) : 0;
+    
+    // Find peak activity hours and days
+    const peakHour = messagesByHour.indexOf(Math.max(...messagesByHour));
+    const peakDay = messagesByDay.indexOf(Math.max(...messagesByDay));
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    
+    res.json({
+      success: true,
+      videoId,
+      stats: {
+        // Basic counts
+        totalMessages,
+        totalParticipants,
+        messagesLast24h: recentMessagesSnapshot.size,
+        messagesLast7d: weeklyMessagesSnapshot.size,
+        totalReplies,
+        
+        // Engagement metrics
+        averageMessagesPerUser: parseFloat(averageMessagesPerUser),
+        replyRate: parseFloat(replyRate),
+        
+        // Activity timeline
+        oldestMessage: oldestMessageDate,
+        newestMessage: newestMessageDate,
+        peakActivityHour: peakHour,
+        peakActivityDay: dayNames[peakDay],
+        
+        // Activity patterns
+        messagesByHour,
+        messagesByDay,
+        
+        // Top participants (limited to top 10)
+        topParticipants: participants.slice(0, 10),
+        
+        // Metadata
+        lastUpdated: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('❌ Get individual video chat stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ============================================
 // SUBJECT CHAT ENDPOINTS
 // ============================================
 
@@ -4908,6 +5552,418 @@ app.get('/admin/chat/stats', authenticateToken, isAdmin, async (req, res) => {
 });
 
 // ========================================
+// MOBILE APP COMPATIBLE ENDPOINTS
+// ========================================
+
+// Mobile app expects these specific endpoint patterns
+// These are aliases to the existing chat functions
+
+// Get subject messages (mobile app format)
+app.get('/subjects/:id/messages', async (req, res) => {
+  try {
+    const { id: subjectId } = req.params;
+    const { limit = 50, lastMessageId } = req.query;
+    
+    const result = await getChatMessages(subjectId, null, lastMessageId, parseInt(limit));
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        messages: result.messages,
+        totalMessages: result.totalMessages
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get subject messages error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Send message to subject (mobile app format)
+app.post('/subjects/:id/messages', authenticateToken, async (req, res) => {
+  try {
+    const { id: subjectId } = req.params;
+    const { text, messageType } = req.body;
+    const userId = req.user.userId;
+    
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message text is required'
+      });
+    }
+    
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const user = userData.data();
+    
+    const messageData = {
+      subjectId,
+      text: text.trim(),
+      messageType: messageType || 'text',
+      senderId: userId,
+      senderName: user.name || user.username || user.email || 'Unknown User',
+      senderEmail: user.email || 'Unknown Email'
+    };
+    
+    const result = await createChatMessage(messageData);
+    
+    if (result.success) {
+      // Broadcast via WebSocket
+      const roomName = `subject_${subjectId}`;
+      if (global.io) {
+        global.io.to(roomName).emit('new-message', {
+          ...result.message,
+          timestamp: new Date()
+        });
+      }
+      
+      res.status(201).json({
+        success: true,
+        messageId: result.messageId,
+        message: result.message,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Send subject message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Reply to message (mobile app format)
+app.post('/messages/:messageId/reply', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { text, subjectId } = req.body;
+    const userId = req.user.userId;
+    
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Reply text is required'
+      });
+    }
+    
+    if (!subjectId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Subject ID is required'
+      });
+    }
+    
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const user = userData.data();
+    
+    const replyData = {
+      subjectId,
+      text: text.trim(),
+      messageType: 'reply',
+      senderId: userId,
+      senderName: user.name || user.username || user.email || 'Unknown User',
+      senderEmail: user.email || 'Unknown Email'
+    };
+    
+    const result = await replyToMessage(messageId, replyData);
+    
+    if (result.success) {
+      // Broadcast reply via WebSocket
+      const roomName = `subject_${subjectId}`;
+      if (global.io) {
+        global.io.to(roomName).emit('new-message', {
+          ...result.message,
+          timestamp: new Date()
+        });
+      }
+      
+      res.status(201).json({
+        success: true,
+        messageId: result.messageId,
+        message: result.message,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Reply to message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete message (mobile app format)
+app.delete('/messages/:messageId', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role || 'user';
+    
+    const result = await deleteChatMessage(messageId, userRole, userId);
+    
+    if (result.success) {
+      // Broadcast message deletion via WebSocket
+      if (global.io) {
+        global.io.emit('message-deleted', {
+          messageId,
+          deletedBy: userId,
+          timestamp: new Date()
+        });
+      }
+      
+      res.json({
+        success: true,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Delete message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get notes messages (mobile app format) - uses same subject chat
+app.get('/notes/:notesId/messages', async (req, res) => {
+  try {
+    const { notesId } = req.params;
+    const { limit = 50, lastMessageId } = req.query;
+    
+    // For notes, we can use the subject chat system with notesId as subjectId
+    // or create a separate notes chat system if needed
+    const result = await getNotesChatMessages(notesId, lastMessageId, parseInt(limit));
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        messages: result.messages,
+        totalMessages: result.totalMessages
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get notes messages error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Send message to notes (mobile app format)
+app.post('/notes/:notesId/messages', authenticateToken, async (req, res) => {
+  try {
+    const { notesId } = req.params;
+    const { text, messageType } = req.body;
+    const userId = req.user.userId;
+    
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message text is required'
+      });
+    }
+    
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const user = userData.data();
+    
+    const messageData = {
+      notesId,
+      text: text.trim(),
+      messageType: messageType || 'text',
+      senderId: userId,
+      senderName: user.name || user.username || user.email || 'Unknown User',
+      senderEmail: user.email || 'Unknown Email'
+    };
+    
+    const result = await createNotesChatMessage(messageData);
+    
+    if (result.success) {
+      // Broadcast via WebSocket
+      const roomName = `notes_${notesId}`;
+      if (global.io) {
+        global.io.to(roomName).emit('new-notes-message', {
+          ...result.message,
+          timestamp: new Date()
+        });
+      }
+      
+      res.status(201).json({
+        success: true,
+        messageId: result.messageId,
+        message: result.message,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Send notes message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Video page chat - Mobile app format
+app.get('/subjects/:id/video-page-chat', async (req, res) => {
+  try {
+    const { id: videoId } = req.params;
+    const { limit = 50, lastMessageId } = req.query;
+    
+    const result = await getVideoPageChatMessages(videoId, lastMessageId, parseInt(limit));
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        messages: result.messages,
+        totalMessages: result.totalMessages
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Get video page chat messages error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+app.post('/subjects/:id/video-page-chat', authenticateToken, async (req, res) => {
+  try {
+    const { id: videoId } = req.params;
+    const { text, messageType } = req.body;
+    const userId = req.user.userId;
+    
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message text is required'
+      });
+    }
+    
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const user = userData.data();
+    
+    const messageData = {
+      videoId,
+      text: text.trim(),
+      messageType: messageType || 'text',
+      senderId: userId,
+      senderName: user.name || user.username || user.email || 'Unknown User',
+      senderEmail: user.email || 'Unknown Email'
+    };
+    
+    const result = await createVideoPageChatMessage(messageData);
+    
+    if (result.success) {
+      // Broadcast via WebSocket
+      const roomName = `video_${videoId}`;
+      if (global.io) {
+        global.io.to(roomName).emit('new-video-message', {
+          ...result.message,
+          timestamp: new Date()
+        });
+      }
+      
+      res.status(201).json({
+        success: true,
+        messageId: result.messageId,
+        message: result.message,
+        status: result.status
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('❌ Send video page chat message error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ========================================
 // WEBSOCKET REAL-TIME CHAT HANDLERS
 // ========================================
 
@@ -5161,6 +6217,205 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ========================================
+  // VIDEO PAGE CHAT WEBSOCKET EVENTS
+  // ========================================
+
+  // Join video page chat room
+  socket.on('join-video-chat', ({ videoId, userId }) => {
+    const roomName = `video_${videoId}`;
+    socket.join(roomName);
+    socket.currentVideoRoom = roomName;
+    
+    console.log(`🎥 User ${userId} joined video chat room: ${roomName}`);
+    
+    // Notify others in the room
+    socket.to(roomName).emit('user-joined-video', { 
+      userId, 
+      userName: activeUsers.get(userId)?.userName || 'Unknown User',
+      timestamp: new Date()
+    });
+    
+    socket.emit('joined-video-chat', { roomName, videoId });
+  });
+
+  // Leave video page chat room
+  socket.on('leave-video-chat', ({ videoId }) => {
+    const roomName = `video_${videoId}`;
+    socket.leave(roomName);
+    
+    console.log(`👋 User left video chat room: ${roomName}`);
+    
+    // Notify others in the room
+    socket.to(roomName).emit('user-left-video', { 
+      userId: socket.userId,
+      userName: activeUsers.get(socket.userId)?.userName || 'Unknown User',
+      timestamp: new Date()
+    });
+  });
+
+  // Handle video page message sending
+  socket.on('send-video-message', async (messageData) => {
+    try {
+      if (!socket.userId) {
+        socket.emit('video-message-error', { error: 'Authentication required' });
+        return;
+      }
+
+      // Add socket user ID to message data
+      messageData.senderId = socket.userId;
+      
+      const result = await createVideoPageChatMessage(messageData);
+      
+      if (result.success) {
+        const roomName = `video_${messageData.videoId}`;
+        
+        // Broadcast to all users in the video room
+        io.to(roomName).emit('new-video-message', {
+          ...result.message,
+          timestamp: new Date()
+        });
+        
+        socket.emit('video-message-sent', { 
+          messageId: result.messageId,
+          tempId: messageData.tempId 
+        });
+      } else {
+        socket.emit('video-message-error', { 
+          error: result.error,
+          tempId: messageData.tempId 
+        });
+      }
+    } catch (error) {
+      console.error('❌ Video message send error:', error);
+      socket.emit('video-message-error', { 
+        error: 'Failed to send message',
+        tempId: messageData.tempId 
+      });
+    }
+  });
+
+  // Handle video page reply sending
+  socket.on('send-video-reply', async (replyData) => {
+    try {
+      if (!socket.userId) {
+        socket.emit('video-reply-error', { error: 'Authentication required' });
+        return;
+      }
+
+      // Add socket user ID to reply data
+      replyData.senderId = socket.userId;
+      
+      const result = await replyToVideoPageMessage(replyData.originalMessageId, replyData);
+      
+      if (result.success) {
+        const videoId = result.message.videoId;
+        const roomName = `video_${videoId}`;
+        
+        // Broadcast reply to all users in the video room
+        io.to(roomName).emit('new-video-message', {
+          ...result.message,
+          timestamp: new Date()
+        });
+        
+        socket.emit('video-reply-sent', { 
+          messageId: result.messageId,
+          tempId: replyData.tempId 
+        });
+      } else {
+        socket.emit('video-reply-error', { 
+          error: result.error,
+          tempId: replyData.tempId 
+        });
+      }
+    } catch (error) {
+      console.error('❌ Video reply send error:', error);
+      socket.emit('video-reply-error', { 
+        error: 'Failed to send reply',
+        tempId: replyData.tempId 
+      });
+    }
+  });
+
+  // Video page typing indicators
+  socket.on('video-typing-start', ({ videoId, userName }) => {
+    const roomName = `video_${videoId}`;
+    socket.to(roomName).emit('user-typing-video', { 
+      userId: socket.userId,
+      userName: userName || activeUsers.get(socket.userId)?.userName || 'Unknown User',
+      timestamp: new Date()
+    });
+  });
+
+  socket.on('video-typing-stop', ({ videoId }) => {
+    const roomName = `video_${videoId}`;
+    socket.to(roomName).emit('user-stopped-typing-video', { 
+      userId: socket.userId,
+      timestamp: new Date()
+    });
+  });
+
+  // Get online users in video page chat
+  socket.on('get-video-online-users', async ({ videoId }) => {
+    try {
+      const roomName = `video_${videoId}`;
+      const room = io.sockets.adapter.rooms.get(roomName);
+      const onlineUsers = [];
+      
+      if (room) {
+        for (const socketId of room) {
+          const userSocket = io.sockets.sockets.get(socketId);
+          if (userSocket && userSocket.userId) {
+            const userData = activeUsers.get(userSocket.userId);
+            onlineUsers.push({
+              userId: userSocket.userId,
+              userName: userData?.userName || 'Unknown User',
+              socketId: socketId
+            });
+          }
+        }
+      }
+      
+      socket.emit('video-online-users', { 
+        videoId,
+        users: onlineUsers,
+        count: onlineUsers.length,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      console.error('❌ Get video online users error:', error);
+      socket.emit('video-online-users-error', { error: 'Failed to get online users' });
+    }
+  });
+
+  // Delete video page message
+  socket.on('delete-video-message', async ({ messageId, userRole }) => {
+    try {
+      if (!socket.userId) {
+        socket.emit('video-delete-error', { error: 'Authentication required' });
+        return;
+      }
+
+      const result = await deleteVideoPageChatMessage(messageId, userRole || 'user', socket.userId);
+      
+      if (result.success) {
+        // Broadcast message deletion to all users
+        io.emit('video-message-deleted', {
+          messageId,
+          deletedBy: socket.userId,
+          timestamp: new Date()
+        });
+        
+        socket.emit('video-message-deleted-success', { messageId });
+      } else {
+        socket.emit('video-delete-error', { error: result.error });
+      }
+    } catch (error) {
+      console.error('❌ Video message delete error:', error);
+      socket.emit('video-delete-error', { error: 'Failed to delete message' });
+    }
+  });
+
   // Heartbeat to keep connection alive
   socket.on('ping', () => {
     socket.emit('pong', { timestamp: new Date() });
@@ -5181,6 +6436,525 @@ const broadcastSystemMessage = (message, roomName = null) => {
     io.emit('system-notification', notification);
   }
 };
+
+// ============================================
+// 📄 PAPERS CHAT FUNCTIONS
+// ============================================
+
+// Create a new papers chat message
+async function createPapersChatMessage(paperId, senderId, senderName, text, messageType = 'text', replyTo = null) {
+  try {
+    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    const messageData = {
+      id: messageId,
+      paperId: paperId,
+      senderId: senderId,
+      senderName: senderName,
+      text: text,
+      messageType: messageType,
+      replyTo: replyTo,
+      createdAt: new Date().toISOString(),
+      isDeleted: false,
+      reactions: {}
+    };
+
+    await setDoc(doc(db, 'papersChatMessages', messageId), messageData);
+    return { success: true, messageId, message: messageData };
+  } catch (error) {
+    console.error('❌ Error creating papers chat message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get papers chat messages with pagination (TEMPORARY: Simplified for index creation)
+async function getPapersChatMessages(paperId, limit = 50, lastMessageId = null) {
+  try {
+    const messagesRef = collection(db, 'papersChatMessages');
+    
+    // TEMPORARY: Use simple query until Firebase index is created
+    let q = query(
+      messagesRef,
+      where('paperId', '==', paperId),
+      limit(parseInt(limit) || 50)
+    );
+
+    const querySnapshot = await getDocs(q);
+    const messages = [];
+    
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      // Filter out deleted messages on client side temporarily
+      if (!data.isDeleted) {
+        messages.push({
+          id: doc.id,
+          ...data
+        });
+      }
+    });
+
+    // Sort by createdAt on client side temporarily
+    messages.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    
+    return { success: true, messages, totalMessages: messages.length };
+  } catch (error) {
+    console.error('❌ Error getting papers chat messages:', error);
+    
+    // If still fails, return empty array
+    console.log('📄 Returning empty messages array - create Firebase index first');
+    return { success: true, messages: [], totalMessages: 0 };
+  }
+}
+
+// Delete papers chat message
+async function deletePapersChatMessage(messageId, userId, isAdmin = false) {
+  try {
+    const messageDoc = await getDoc(doc(db, 'papersChatMessages', messageId));
+    
+    if (!messageDoc.exists()) {
+      return { success: false, error: 'Message not found' };
+    }
+    
+    const messageData = messageDoc.data();
+    
+    // Check permissions - user can delete own message, admin can delete any
+    if (messageData.senderId !== userId && !isAdmin) {
+      return { success: false, error: 'Permission denied' };
+    }
+
+    // Soft delete
+    await updateDoc(doc(db, 'papersChatMessages', messageId), {
+      isDeleted: true,
+      deletedAt: new Date().toISOString(),
+      deletedBy: userId
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('❌ Error deleting papers chat message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Reply to papers chat message
+async function replyToPapersMessage(messageId, paperId, senderId, senderName, text) {
+  try {
+    // Get original message
+    const originalMessageDoc = await getDoc(doc(db, 'papersChatMessages', messageId));
+    
+    if (!originalMessageDoc.exists()) {
+      return { success: false, error: 'Original message not found' };
+    }
+
+    const originalMessage = originalMessageDoc.data();
+    
+    const replyData = {
+      messageId: messageId,
+      originalText: originalMessage.text,
+      originalSenderName: originalMessage.senderName,
+      originalSenderId: originalMessage.senderId
+    };
+
+    const result = await createPapersChatMessage(paperId, senderId, senderName, text, 'reply', replyData);
+    return result;
+  } catch (error) {
+    console.error('❌ Error replying to papers message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get papers chat participants
+async function getPapersChatParticipants(paperId) {
+  try {
+    const messagesRef = collection(db, 'papersChatMessages');
+    const q = query(
+      messagesRef,
+      where('paperId', '==', paperId),
+      where('isDeleted', '==', false)
+    );
+
+    const querySnapshot = await getDocs(q);
+    const participantMap = new Map();
+
+    querySnapshot.forEach((doc) => {
+      const message = doc.data();
+      const userId = message.senderId;
+      
+      if (participantMap.has(userId)) {
+        participantMap.get(userId).messageCount++;
+        if (new Date(message.createdAt) > new Date(participantMap.get(userId).lastMessageAt)) {
+          participantMap.get(userId).lastMessageAt = message.createdAt;
+        }
+      } else {
+        participantMap.set(userId, {
+          userId: userId,
+          name: message.senderName,
+          email: message.senderEmail || '',  
+          messageCount: 1,
+          lastMessageAt: message.createdAt
+        });
+      }
+    });
+
+    const participants = Array.from(participantMap.values());
+    
+    return { 
+      success: true, 
+      participants,
+      totalParticipants: participants.length 
+    };
+  } catch (error) {
+    console.error('❌ Error getting papers chat participants:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get papers chat statistics for admin
+async function getPapersChatStats() {
+  try {
+    const messagesRef = collection(db, 'papersChatMessages');
+    const allMessagesQuery = query(messagesRef, where('isDeleted', '==', false));
+    const allMessages = await getDocs(allMessagesQuery);
+
+    // Get messages from last 24 hours
+    const last24h = new Date();
+    last24h.setHours(last24h.getHours() - 24);
+    const recent24hQuery = query(
+      messagesRef,
+      where('isDeleted', '==', false),
+      where('createdAt', '>=', last24h.toISOString())
+    );
+    const recent24hMessages = await getDocs(recent24hQuery);
+
+    // Count unique users and papers
+    const uniqueUsers = new Set();
+    const uniquePapers = new Set();
+
+    allMessages.forEach((doc) => {
+      const message = doc.data();
+      uniqueUsers.add(message.senderId);
+      uniquePapers.add(message.paperId);
+    });
+
+    return {
+      success: true,
+      stats: {
+        totalMessages: allMessages.size,
+        totalActiveUsers: uniqueUsers.size,
+        totalPapersWithMessages: uniquePapers.size,
+        messagesLast24h: recent24hMessages.size,
+        lastUpdated: new Date().toISOString()
+      }
+    };
+  } catch (error) {
+    console.error('❌ Error getting papers chat stats:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// ============================================
+// 📄 PAPERS CHAT ENDPOINTS
+// ============================================
+
+// Send message to papers chat
+app.post('/papers/:paperId/chat', authenticateToken, async (req, res) => {
+  try {
+    const { paperId } = req.params;
+    const { text, messageType = 'text' } = req.body;
+    const userId = req.user.userId;
+    const userName = req.user.name || req.user.username || req.user.displayName || req.user.email?.split('@')[0] || 'Unknown User';
+
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message text is required'
+      });
+    }
+
+    // Create message
+    const result = await createPapersChatMessage(paperId, userId, userName, text.trim(), messageType);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    // Emit real-time message to papers chat room
+    io.to(`papers_${paperId}`).emit('new-papers-message', result.message);
+
+    res.status(201).json({
+      success: true,
+      messageId: result.messageId,
+      message: result.message,
+      status: 'Papers chat message sent successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error sending papers chat message:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send papers chat message'
+    });
+  }
+});
+
+// Get papers chat messages
+app.get('/papers/:paperId/chat', async (req, res) => {
+  try {
+    const { paperId } = req.params;
+    const { limit = 50, lastMessageId } = req.query;
+
+    const result = await getPapersChatMessages(paperId, parseInt(limit), lastMessageId);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    res.json({
+      success: true,
+      messages: result.messages,
+      totalMessages: result.totalMessages
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting papers chat messages:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get papers chat messages'
+    });
+  }
+});
+
+// Reply to papers chat message
+app.post('/papers-chat/:messageId/reply', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { text, paperId } = req.body;
+    const userId = req.user.userId;
+    const userName = req.user.name || req.user.username || req.user.displayName || req.user.email?.split('@')[0] || 'Unknown User';
+
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Reply text is required'
+      });
+    }
+
+    if (!paperId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Paper ID is required'
+      });
+    }
+
+    // Create reply
+    const result = await replyToPapersMessage(messageId, paperId, userId, userName, text.trim());
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    // Emit real-time reply to papers chat room
+    io.to(`papers_${paperId}`).emit('new-papers-message', result.message);
+
+    res.status(201).json({
+      success: true,
+      messageId: result.messageId,
+      message: result.message,
+      status: 'Papers chat message sent successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error replying to papers chat message:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to reply to papers chat message'
+    });
+  }
+});
+
+// Get papers chat participants
+app.get('/papers/:paperId/chat/participants', async (req, res) => {
+  try {
+    const { paperId } = req.params;
+
+    const result = await getPapersChatParticipants(paperId);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    res.json({
+      success: true,
+      participants: result.participants,
+      totalParticipants: result.totalParticipants
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting papers chat participants:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get papers chat participants'
+    });
+  }
+});
+
+// Delete papers chat message
+app.delete('/papers-chat/:messageId', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user.userId;
+    const isAdmin = req.user.role === 'admin';
+
+    const result = await deletePapersChatMessage(messageId, userId, isAdmin);
+    
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    // Emit deletion event to all connected clients
+    io.emit('papers-message-deleted', { messageId });
+
+    res.json({
+      success: true,
+      status: 'Papers chat message deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error deleting papers chat message:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete papers chat message'
+    });
+  }
+});
+
+// Admin: Get papers chat statistics
+app.get('/admin/papers-chat/stats', authenticateToken, async (req, res) => {
+  try {
+    // Check if user is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Admin access required'
+      });
+    }
+
+    const result = await getPapersChatStats();
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    res.json({
+      success: true,
+      stats: result.stats
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting papers chat stats:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get papers chat statistics'
+    });
+  }
+});
+
+// Mobile App Compatible Endpoints for Papers Chat
+
+// Get papers messages (mobile format)
+app.get('/papers/:paperId/messages', async (req, res) => {
+  try {
+    const { paperId } = req.params;
+    const { limit = 50, lastMessageId } = req.query;
+
+    const result = await getPapersChatMessages(paperId, parseInt(limit), lastMessageId);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    res.json({
+      success: true,
+      messages: result.messages,
+      totalMessages: result.totalMessages
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting papers messages:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get papers messages'
+    });
+  }
+});
+
+// Send papers message (mobile format)
+app.post('/papers/:paperId/messages', authenticateToken, async (req, res) => {
+  try {
+    const { paperId } = req.params;
+    const { text, messageType = 'text' } = req.body;
+    const userId = req.user.userId;
+    const userName = req.user.name || req.user.username || req.user.displayName || req.user.email?.split('@')[0] || 'Unknown User';
+
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message text is required'
+      });
+    }
+
+    // Create message
+    const result = await createPapersChatMessage(paperId, userId, userName, text.trim(), messageType);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    // Emit real-time message to papers chat room
+    io.to(`papers_${paperId}`).emit('new-papers-message', result.message);
+
+    res.status(201).json({
+      success: true,
+      messageId: result.messageId,
+      message: result.message,
+      status: 'Papers chat message sent successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error sending papers message:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send papers message'
+    });
+  }
+});
 
 // Export for use in other parts of the application
 global.io = io;
