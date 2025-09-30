@@ -6416,6 +6416,206 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ============================================
+  // 🔗 REFERENCE LINKS CHAT WEBSOCKET EVENTS
+  // ============================================
+
+  // Join reference links chat room
+  socket.on('join-reference-chat', ({ referenceLinkId, userId }) => {
+    try {
+      const roomName = `references_${referenceLinkId}`;
+      socket.join(roomName);
+      
+      // Store user info for this connection
+      socket.referenceLinkId = referenceLinkId;
+      socket.userId = userId;
+      
+      console.log(`👥 User ${userId} joined reference links chat room: ${roomName}`);
+      
+      // Notify others in the room
+      socket.to(roomName).emit('user-joined-reference-chat', {
+        userId,
+        joinedAt: new Date()
+      });
+      
+      socket.emit('joined-reference-chat', {
+        roomName,
+        message: `Joined reference links discussion ${referenceLinkId}`,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      console.error('❌ Error joining reference links chat:', error);
+      socket.emit('reference-join-error', { error: 'Failed to join reference links chat' });
+    }
+  });
+
+  // Leave reference links chat room
+  socket.on('leave-reference-chat', ({ referenceLinkId }) => {
+    try {
+      const roomName = `references_${referenceLinkId}`;
+      socket.leave(roomName);
+      
+      console.log(`👥 User left reference links chat room: ${roomName}`);
+      
+      // Notify others in the room
+      socket.to(roomName).emit('user-left-reference-chat', {
+        userId: socket.userId,
+        leftAt: new Date()
+      });
+      
+      socket.emit('left-reference-chat', {
+        message: `Left reference links discussion ${referenceLinkId}`,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      console.error('❌ Error leaving reference links chat:', error);
+    }
+  });
+
+  // Send message to reference links chat
+  socket.on('send-reference-message', async (messageData) => {
+    try {
+      const { referenceLinkId, text, messageType, userId, userName, tempId } = messageData;
+      
+      // Create message in database
+      const result = await createReferenceLinksChatMessage(referenceLinkId, userId, userName, text, messageType);
+      
+      if (result.success) {
+        const fullMessage = {
+          ...result.message,
+          tempId // Include tempId for client-side message matching
+        };
+        
+        // Broadcast to all users in the reference links room
+        const roomName = `references_${referenceLinkId}`;
+        io.to(roomName).emit('new-reference-message', fullMessage);
+        
+        console.log(`💬 Reference links message sent to room ${roomName}:`, text.substring(0, 50));
+      } else {
+        socket.emit('reference-message-error', { 
+          error: result.error,
+          tempId 
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error sending reference links message:', error);
+      socket.emit('reference-message-error', { 
+        error: 'Failed to send message',
+        tempId: messageData.tempId 
+      });
+    }
+  });
+
+  // Send reply to reference links message
+  socket.on('send-reference-reply', async (replyData) => {
+    try {
+      const { originalMessageId, referenceLinkId, text, userId, userName, tempId } = replyData;
+      
+      // Create reply in database
+      const result = await replyToReferenceLinksMessage(originalMessageId, referenceLinkId, userId, userName, text);
+      
+      if (result.success) {
+        const fullReply = {
+          ...result.message,
+          tempId // Include tempId for client-side message matching
+        };
+        
+        // Broadcast to all users in the reference links room
+        const roomName = `references_${referenceLinkId}`;
+        io.to(roomName).emit('new-reference-message', fullReply);
+        
+        console.log(`↩️ Reference links reply sent to room ${roomName}:`, text.substring(0, 50));
+      } else {
+        socket.emit('reference-reply-error', { 
+          error: result.error,
+          tempId 
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error sending reference links reply:', error);
+      socket.emit('reference-reply-error', { 
+        error: 'Failed to send reply',
+        tempId: replyData.tempId 
+      });
+    }
+  });
+
+  // Reference links typing indicators
+  socket.on('reference-typing-start', ({ referenceLinkId, userName }) => {
+    try {
+      const roomName = `references_${referenceLinkId}`;
+      socket.to(roomName).emit('reference-typing-start', { userName });
+      console.log(`✏️ ${userName} started typing in reference links ${referenceLinkId}`);
+    } catch (error) {
+      console.error('❌ Error in reference links typing start:', error);
+    }
+  });
+
+  socket.on('reference-typing-stop', ({ referenceLinkId }) => {
+    try {
+      const roomName = `references_${referenceLinkId}`;
+      socket.to(roomName).emit('reference-typing-stop');
+      console.log(`✏️ Typing stopped in reference links ${referenceLinkId}`);
+    } catch (error) {
+      console.error('❌ Error in reference links typing stop:', error);
+    }
+  });
+
+  // Get online users in reference links chat
+  socket.on('get-reference-online-users', async ({ referenceLinkId }) => {
+    try {
+      const roomName = `references_${referenceLinkId}`;
+      const room = io.sockets.adapter.rooms.get(roomName);
+      const onlineUsers = [];
+      
+      if (room) {
+        for (const socketId of room) {
+          const userSocket = io.sockets.sockets.get(socketId);
+          if (userSocket && userSocket.userId && userSocket.userName) {
+            onlineUsers.push({
+              userId: userSocket.userId,
+              userName: userSocket.userName,
+              socketId: socketId
+            });
+          }
+        }
+      }
+      
+      socket.emit('reference-online-users', {
+        referenceLinkId,
+        users: onlineUsers,
+        count: onlineUsers.length,
+        timestamp: new Date()
+      });
+      
+      console.log(`👥 Reference links ${referenceLinkId} has ${onlineUsers.length} online users`);
+    } catch (error) {
+      console.error('❌ Error getting reference links online users:', error);
+      socket.emit('reference-online-users-error', { error: 'Failed to get online users' });
+    }
+  });
+
+  // Delete reference links message
+  socket.on('delete-reference-message', async ({ messageId, userRole }) => {
+    try {
+      const result = await deleteReferenceLinksChatMessage(messageId, userRole, socket.userId);
+      
+      if (result.success) {
+        // Broadcast deletion to all users in relevant rooms
+        // Note: We might need to fetch the referenceLinkId from the message to determine the room
+        // For now, we'll emit a general deletion event
+        socket.emit('reference-message-deleted', { messageId });
+        
+        console.log(`🗑️ Reference links message ${messageId} deleted by user ${socket.userId}`);
+      } else {
+        socket.emit('reference-delete-error', { error: result.error });
+      }
+    } catch (error) {
+      console.error('❌ Error deleting reference links message:', error);
+      socket.emit('reference-delete-error', { error: 'Failed to delete message' });
+    }
+  });
+
   // Heartbeat to keep connection alive
   socket.on('ping', () => {
     socket.emit('pong', { timestamp: new Date() });
@@ -6653,7 +6853,213 @@ async function getPapersChatStats() {
 }
 
 // ============================================
-// 📄 PAPERS CHAT ENDPOINTS
+// � REFERENCE LINKS CHAT FUNCTIONS
+// ============================================
+
+async function createReferenceLinksChatMessage(referenceLinkId, senderId, senderName, text, messageType = 'text', replyTo = null) {
+  try {
+    const messageId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    const messageData = {
+      id: messageId,
+      referenceLinkId,
+      senderId,
+      senderName,
+      text,
+      messageType,
+      replyTo,
+      createdAt: new Date(),
+      isDeleted: false,
+      reactions: {}
+    };
+
+    await setDoc(doc(db, 'referenceLinksChatMessages', messageId), messageData);
+    
+    console.log('✅ Reference links chat message created:', messageId);
+    return { success: true, messageId, message: messageData, status: 'Reference links chat message sent successfully' };
+  } catch (error) {
+    console.error('❌ Error creating reference links chat message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getReferenceLinksChatMessages(referenceLinkId, messageLimit = 50, lastMessageId = null) {
+  try {
+    // Simple query without complex indexes for now
+    const q = query(
+      collection(db, 'referenceLinksChatMessages'),
+      where('referenceLinkId', '==', referenceLinkId),
+      where('isDeleted', '==', false)
+    );
+    
+    const querySnapshot = await getDocs(q);
+    let messages = [];
+    
+    querySnapshot.forEach((docSnap) => {
+      const messageData = docSnap.data();
+      messages.push({
+        id: docSnap.id,
+        ...messageData,
+        createdAt: messageData.createdAt?.toDate ? messageData.createdAt.toDate().toISOString() : messageData.createdAt
+      });
+    });
+
+    // Sort by creation date (newest first) and apply limit
+    messages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    
+    if (messageLimit) {
+      messages = messages.slice(0, messageLimit);
+    }
+    
+    console.log(`✅ Retrieved ${messages.length} reference links chat messages for ${referenceLinkId}`);
+    return { success: true, messages, totalMessages: messages.length };
+  } catch (error) {
+    console.error('❌ Error getting reference links chat messages:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function deleteReferenceLinksChatMessage(messageId, userRole, userId) {
+  try {
+    const messageDoc = await getDoc(doc(db, 'referenceLinksChatMessages', messageId));
+    
+    if (!messageDoc.exists()) {
+      return { success: false, error: 'Message not found' };
+    }
+
+    const messageData = messageDoc.data();
+    
+    // Check permissions: user can delete own messages, admin can delete any
+    if (messageData.senderId !== userId && userRole !== 'admin') {
+      return { success: false, error: 'Permission denied' };
+    }
+
+    await updateDoc(doc(db, 'referenceLinksChatMessages', messageId), {
+      isDeleted: true,
+      deletedAt: new Date(),
+      deletedBy: userId
+    });
+
+    console.log('✅ Reference links chat message deleted:', messageId);
+    return { success: true, status: 'Reference links chat message deleted successfully' };
+  } catch (error) {
+    console.error('❌ Error deleting reference links chat message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function replyToReferenceLinksMessage(messageId, referenceLinkId, senderId, senderName, text) {
+  try {
+    // Get original message
+    const originalDoc = await getDoc(doc(db, 'referenceLinksChatMessages', messageId));
+    
+    if (!originalDoc.exists()) {
+      return { success: false, error: 'Original message not found' };
+    }
+
+    const originalMessage = originalDoc.data();
+    const replyData = {
+      messageId,
+      originalText: originalMessage.text,
+      originalSenderName: originalMessage.senderName,
+      originalSenderId: originalMessage.senderId
+    };
+
+    const result = await createReferenceLinksChatMessage(referenceLinkId, senderId, senderName, text, 'reply', replyData);
+    return result;
+  } catch (error) {
+    console.error('❌ Error replying to reference links message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getReferenceLinksChatParticipants(referenceLinkId) {
+  try {
+    const q = query(
+      collection(db, 'referenceLinksChatMessages'),
+      where('referenceLinkId', '==', referenceLinkId),
+      where('isDeleted', '==', false)
+    );
+    
+    const querySnapshot = await getDocs(q);
+    const participantMap = new Map();
+    
+    querySnapshot.forEach((docSnap) => {
+      const messageData = docSnap.data();
+      const userId = messageData.senderId;
+      
+      if (participantMap.has(userId)) {
+        participantMap.get(userId).messageCount += 1;
+        const messageDate = messageData.createdAt?.toDate ? messageData.createdAt.toDate() : new Date(messageData.createdAt);
+        if (messageDate > participantMap.get(userId).lastMessageAt) {
+          participantMap.get(userId).lastMessageAt = messageDate;
+        }
+      } else {
+        participantMap.set(userId, {
+          userId,
+          name: messageData.senderName,
+          messageCount: 1,
+          lastMessageAt: messageData.createdAt?.toDate ? messageData.createdAt.toDate() : new Date(messageData.createdAt)
+        });
+      }
+    });
+
+    const participants = Array.from(participantMap.values()).map(participant => ({
+      ...participant,
+      lastMessageAt: participant.lastMessageAt.toISOString()
+    }));
+
+    console.log(`✅ Found ${participants.length} participants in reference links chat ${referenceLinkId}`);
+    return { success: true, participants, totalParticipants: participants.length };
+  } catch (error) {
+    console.error('❌ Error getting reference links chat participants:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getReferenceLinksChatStats() {
+  try {
+    const messagesQuery = collection(db, 'referenceLinksChatMessages');
+    const messagesSnapshot = await getDocs(messagesQuery);
+    
+    let totalMessages = 0;
+    let activeUsers = new Set();
+    let activeReferenceLinks = new Set();
+    let messagesLast24h = 0;
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    
+    messagesSnapshot.forEach((doc) => {
+      const messageData = doc.data();
+      if (!messageData.isDeleted) {
+        totalMessages++;
+        activeUsers.add(messageData.senderId);
+        activeReferenceLinks.add(messageData.referenceLinkId);
+        
+        const messageDate = messageData.createdAt?.toDate ? messageData.createdAt.toDate() : new Date(messageData.createdAt);
+        if (messageDate > yesterday) {
+          messagesLast24h++;
+        }
+      }
+    });
+
+    const stats = {
+      totalMessages,
+      totalActiveUsers: activeUsers.size,
+      totalReferenceLinksWithMessages: activeReferenceLinks.size,
+      messagesLast24h,
+      lastUpdated: new Date().toISOString()
+    };
+
+    console.log('✅ Reference links chat stats retrieved:', stats);
+    return { success: true, stats };
+  } catch (error) {
+    console.error('❌ Error getting reference links chat stats:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// ============================================
+// �📄 PAPERS CHAT ENDPOINTS
 // ============================================
 
 // Send message to papers chat
@@ -6985,6 +7391,334 @@ app.post('/papers/:paperId/messages', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to send papers message'
+    });
+  }
+});
+
+// ============================================
+// 🔗 REFERENCE LINKS CHAT ENDPOINTS
+// ============================================
+
+// Send message to reference links chat
+app.post('/references/:referenceLinkId/chat', authenticateToken, async (req, res) => {
+  try {
+    const { referenceLinkId } = req.params;
+    const { text, messageType = 'text' } = req.body;
+    const userId = req.user.userId;
+
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message text is required'
+      });
+    }
+
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const user = userData.data();
+    const userName = user.name || user.username || user.email || 'Unknown User';
+
+    // Create message
+    const result = await createReferenceLinksChatMessage(referenceLinkId, userId, userName, text.trim(), messageType);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    // Emit real-time message to reference links chat room
+    io.to(`references_${referenceLinkId}`).emit('new-reference-message', result.message);
+
+    res.status(201).json({
+      success: true,
+      messageId: result.messageId,
+      message: result.message,
+      status: result.status
+    });
+
+  } catch (error) {
+    console.error('❌ Error sending reference links chat message:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send reference links chat message'
+    });
+  }
+});
+
+// Get reference links chat messages (public access)
+app.get('/references/:referenceLinkId/chat', async (req, res) => {
+  try {
+    const { referenceLinkId } = req.params;
+    const { limit = 50, lastMessageId } = req.query;
+
+    const result = await getReferenceLinksChatMessages(referenceLinkId, parseInt(limit), lastMessageId);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    res.json({
+      success: true,
+      messages: result.messages,
+      totalMessages: result.totalMessages
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting reference links chat messages:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get reference links chat messages'
+    });
+  }
+});
+
+// Reply to reference links chat message
+app.post('/references-chat/:messageId/reply', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { text, referenceLinkId } = req.body;
+    const userId = req.user.userId;
+
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Reply text is required'
+      });
+    }
+
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const user = userData.data();
+    const userName = user.name || user.username || user.email || 'Unknown User';
+
+    if (!referenceLinkId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Reference Link ID is required'
+      });
+    }
+
+    // Create reply
+    const result = await replyToReferenceLinksMessage(messageId, referenceLinkId, userId, userName, text.trim());
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    // Emit real-time reply to reference links chat room
+    io.to(`references_${referenceLinkId}`).emit('new-reference-message', result.message);
+
+    res.status(201).json({
+      success: true,
+      messageId: result.messageId,
+      message: result.message,
+      status: result.status
+    });
+
+  } catch (error) {
+    console.error('❌ Error replying to reference links message:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to reply to reference links message'
+    });
+  }
+});
+
+// Get reference links chat participants (public access)
+app.get('/references/:referenceLinkId/chat/participants', async (req, res) => {
+  try {
+    const { referenceLinkId } = req.params;
+
+    const result = await getReferenceLinksChatParticipants(referenceLinkId);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    res.json({
+      success: true,
+      participants: result.participants,
+      totalParticipants: result.totalParticipants
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting reference links chat participants:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get reference links chat participants'
+    });
+  }
+});
+
+// Delete reference links chat message
+app.delete('/references-chat/:messageId', authenticateToken, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    const result = await deleteReferenceLinksChatMessage(messageId, userRole, userId);
+    
+    if (!result.success) {
+      return res.status(403).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    // Emit real-time deletion event
+    // Note: We need referenceLinkId to emit to correct room, but it's not in params
+    // This could be improved by including referenceLinkId in the request or fetching it
+    
+    res.json({
+      success: true,
+      status: result.status
+    });
+
+  } catch (error) {
+    console.error('❌ Error deleting reference links chat message:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete reference links chat message'
+    });
+  }
+});
+
+// Admin: Get reference links chat statistics
+app.get('/admin/references-chat/stats', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const result = await getReferenceLinksChatStats();
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    res.json({
+      success: true,
+      stats: result.stats
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting reference links chat stats:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get reference links chat statistics'
+    });
+  }
+});
+
+// Mobile app endpoint - get reference links messages
+app.get('/references/:referenceLinkId/messages', async (req, res) => {
+  try {
+    const { referenceLinkId } = req.params;
+    const { limit = 50, lastMessageId } = req.query;
+
+    const result = await getReferenceLinksChatMessages(referenceLinkId, parseInt(limit), lastMessageId);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    res.json({
+      success: true,
+      messages: result.messages,
+      totalMessages: result.totalMessages
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting reference links messages:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get reference links messages'
+    });
+  }
+});
+
+// Mobile app endpoint - send reference links message
+app.post('/references/:referenceLinkId/messages', authenticateToken, async (req, res) => {
+  try {
+    const { referenceLinkId } = req.params;
+    const { text, messageType = 'text' } = req.body;
+    const userId = req.user.userId;
+
+    // Validate input
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message text is required'
+      });
+    }
+
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const user = userData.data();
+    const userName = user.name || user.username || user.email || 'Unknown User';
+
+    // Create message
+    const result = await createReferenceLinksChatMessage(referenceLinkId, userId, userName, text.trim(), messageType);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+
+    // Emit real-time message to reference links chat room
+    io.to(`references_${referenceLinkId}`).emit('new-reference-message', result.message);
+
+    res.status(201).json({
+      success: true,
+      messageId: result.messageId,
+      message: result.message,
+      status: 'Reference links chat message sent successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error sending reference links message:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send reference links message'
     });
   }
 });
