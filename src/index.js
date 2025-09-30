@@ -12,7 +12,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { initializeApp } = require('firebase/app');
-const { getFirestore, doc, setDoc, updateDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, orderBy, limitToLast, startAfter, connectFirestoreEmulator } = require('firebase/firestore');
+const { getFirestore, doc, setDoc, updateDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, orderBy, limit, limitToLast, startAfter, connectFirestoreEmulator } = require('firebase/firestore');
 const { sendWelcomeEmail, sendPasswordResetEmail, testEmailConnection } = require('./emailService');
 
 const app = express();
@@ -6468,7 +6468,7 @@ async function createPapersChatMessage(paperId, senderId, senderName, text, mess
 }
 
 // Get papers chat messages with pagination (TEMPORARY: Simplified for index creation)
-async function getPapersChatMessages(paperId, limit = 50, lastMessageId = null) {
+async function getPapersChatMessages(paperId, messageLimit = 50, lastMessageId = null) {
   try {
     const messagesRef = collection(db, 'papersChatMessages');
     
@@ -6476,7 +6476,7 @@ async function getPapersChatMessages(paperId, limit = 50, lastMessageId = null) 
     let q = query(
       messagesRef,
       where('paperId', '==', paperId),
-      limit(parseInt(limit) || 50)
+      limit(parseInt(messageLimit) || 50)
     );
 
     const querySnapshot = await getDocs(q);
@@ -6662,7 +6662,6 @@ app.post('/papers/:paperId/chat', authenticateToken, async (req, res) => {
     const { paperId } = req.params;
     const { text, messageType = 'text' } = req.body;
     const userId = req.user.userId;
-    const userName = req.user.name || req.user.username || req.user.displayName || req.user.email?.split('@')[0] || 'Unknown User';
 
     // Validate input
     if (!text || text.trim().length === 0) {
@@ -6671,6 +6670,18 @@ app.post('/papers/:paperId/chat', authenticateToken, async (req, res) => {
         error: 'Message text is required'
       });
     }
+
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const user = userData.data();
+    const userName = user.name || user.username || user.email || 'Unknown User';
 
     // Create message
     const result = await createPapersChatMessage(paperId, userId, userName, text.trim(), messageType);
@@ -6737,7 +6748,6 @@ app.post('/papers-chat/:messageId/reply', authenticateToken, async (req, res) =>
     const { messageId } = req.params;
     const { text, paperId } = req.body;
     const userId = req.user.userId;
-    const userName = req.user.name || req.user.username || req.user.displayName || req.user.email?.split('@')[0] || 'Unknown User';
 
     // Validate input
     if (!text || text.trim().length === 0) {
@@ -6746,6 +6756,18 @@ app.post('/papers-chat/:messageId/reply', authenticateToken, async (req, res) =>
         error: 'Reply text is required'
       });
     }
+
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const user = userData.data();
+    const userName = user.name || user.username || user.email || 'Unknown User';
 
     if (!paperId) {
       return res.status(400).json({
@@ -6917,7 +6939,6 @@ app.post('/papers/:paperId/messages', authenticateToken, async (req, res) => {
     const { paperId } = req.params;
     const { text, messageType = 'text' } = req.body;
     const userId = req.user.userId;
-    const userName = req.user.name || req.user.username || req.user.displayName || req.user.email?.split('@')[0] || 'Unknown User';
 
     // Validate input
     if (!text || text.trim().length === 0) {
@@ -6926,6 +6947,18 @@ app.post('/papers/:paperId/messages', authenticateToken, async (req, res) => {
         error: 'Message text is required'
       });
     }
+
+    // Get user data
+    const userData = await getDoc(doc(db, 'users', userId));
+    if (!userData.exists()) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const user = userData.data();
+    const userName = user.name || user.username || user.email || 'Unknown User';
 
     // Create message
     const result = await createPapersChatMessage(paperId, userId, userName, text.trim(), messageType);

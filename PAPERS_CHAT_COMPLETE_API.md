@@ -6,6 +6,7 @@ The **Papers Chat System** allows users to discuss and ask questions about speci
 ## 📊 Database Collection
 - **Collection**: `papersChatMessages`
 - **Document Structure**: Same as other chat systems with `paperId` field
+- **Username Display**: Shows actual usernames (like notes & videos chat), not email prefixes
 
 ## 📡 **ALL PAPERS CHAT ENDPOINTS**
 
@@ -450,3 +451,11 @@ console.log('Sending reply:', {
   isTextEmpty: !replyText || replyText.trim().length === 0
 });
 ```
+
+## ✅ **Username Display Fixed**
+
+**Papers chat now displays usernames consistently:**
+- ✅ **Before**: Showed email prefixes (e.g., "john" from "john@example.com")
+- ✅ **After**: Shows actual usernames (same as notes & videos chat)
+- 🔄 **Implementation**: Fetches user data from Firebase like other chat systems
+- 📱 **Compatibility**: Works for both web and mobile endpoints
