@@ -1,5 +1,5 @@
 const { initializeApp } = require('firebase/app');
-const { getFirestore, doc, setDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, connectFirestoreEmulator } = require('firebase/firestore');
+const { getFirestore, doc, setDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, updateDoc, orderBy, limit, limitToLast, startAfter, connectFirestoreEmulator } = require('firebase/firestore');
 
 // Firebase configuration
 const firebaseConfig = {
@@ -32,5 +32,10 @@ module.exports = {
   where,
   getDocs,
   deleteDoc,
-  addDoc
+  addDoc,
+  updateDoc,
+  orderBy,
+  limit,
+  limitToLast,
+  startAfter
 };

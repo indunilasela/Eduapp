@@ -11,8 +11,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { initializeApp } = require('firebase/app');
-const { getFirestore, doc, setDoc, updateDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, orderBy, limit, limitToLast, startAfter, connectFirestoreEmulator } = require('firebase/firestore');
+const { db, doc, setDoc, updateDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, orderBy, limit, limitToLast, startAfter } = require('./database');
 const { sendWelcomeEmail, sendPasswordResetEmail, testEmailConnection } = require('./emailService');
 
 const app = express();
@@ -273,19 +272,7 @@ function authenticateToken(req, res, next) {
   });
 }
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDZYyoUJnEjkjueiwM3LQxsvDwlMp3O8hM",
-  authDomain: "eduapp-62956.firebaseapp.com",
-  projectId: "eduapp-62956",
-  storageBucket: "eduapp-62956.firebasestorage.app",
-  messagingSenderId: "265182560724",
-  appId: "1:265182560724:web:9e582460d99b3edf4d1641",
-  measurementId: "G-6LBTTEV23F"
-};
-
-console.log('🔥 Initializing Firebase...');
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
+// Firebase is now initialized in database.js
 
 // Firebase utility functions
 async function writeUserData(userId, userData) {
@@ -7722,6 +7709,12 @@ app.post('/references/:referenceLinkId/messages', authenticateToken, async (req,
     });
   }
 });
+
+// Add Answer Integration
+const { setupAddAnswerIntegration } = require('./addAnswerIntegration');
+
+// Setup Add Answer routes
+setupAddAnswerIntegration(app);
 
 // Export for use in other parts of the application
 global.io = io;
