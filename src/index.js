@@ -11,8 +11,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { initializeApp } = require('firebase/app');
-const { getFirestore, doc, setDoc, updateDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, orderBy, limit, limitToLast, startAfter, connectFirestoreEmulator } = require('firebase/firestore');
+const { db, doc, setDoc, updateDoc, getDoc, query, collection, where, getDocs, deleteDoc, addDoc, orderBy, limit, limitToLast, startAfter } = require('./database');
 const { sendWelcomeEmail, sendPasswordResetEmail, testEmailConnection } = require('./emailService');
 
 const app = express();
@@ -49,26 +48,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve static files from uploads directory
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// No longer needed - using database storage instead of file system
+// app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadPath = path.join(__dirname, '../uploads/profile-images');
-    // Ensure directory exists
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    // Create unique filename with timestamp and random string
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const extension = path.extname(file.originalname);
-    cb(null, 'profile-' + uniqueSuffix + extension);
-  }
-});
+// Configure multer for memory storage (no file system storage)
+const storage = multer.memoryStorage();
 
 // File filter for images only
 const fileFilter = (req, file, cb) => {
@@ -89,23 +73,8 @@ const upload = multer({
   }
 });
 
-// Notes file upload configuration (supports pptx, docx, pdf, txt)
-const notesStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadPath = path.join(__dirname, '../uploads/notes');
-    // Ensure directory exists
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    // Generate unique filename with timestamp and random string
-    const uniqueSuffix = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    const extension = path.extname(file.originalname);
-    cb(null, uniqueSuffix + extension);
-  }
-});
+// Notes file upload configuration (memory storage - no physical files)
+const notesStorage = multer.memoryStorage();
 
 const notesFileFilter = (req, file, cb) => {
   // Allow pptx, docx, pdf, txt files
@@ -131,23 +100,8 @@ const uploadNotes = multer({
   }
 });
 
-// Video file upload configuration (supports mp4, avi, mov, mkv, webm)
-const videoStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadPath = path.join(__dirname, '../uploads/videos');
-    // Ensure directory exists
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    // Generate unique filename with timestamp and random string
-    const uniqueSuffix = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    const extension = path.extname(file.originalname);
-    cb(null, uniqueSuffix + extension);
-  }
-});
+// Video file upload configuration (memory storage - no physical files)
+const videoStorage = multer.memoryStorage();
 
 const videoFileFilter = (req, file, cb) => {
   // Allow common video formats
@@ -175,23 +129,8 @@ const uploadVideos = multer({
   }
 });
 
-// PDF storage configuration for papers
-const pdfStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadPath = path.join(__dirname, '../uploads/papers');
-    // Ensure directory exists
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    // Create unique filename with timestamp and random string
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const extension = path.extname(file.originalname);
-    cb(null, 'paper-' + uniqueSuffix + extension);
-  }
-});
+// PDF storage configuration for papers (memory storage - no physical files)
+const pdfStorage = multer.memoryStorage();
 
 // File filter for PDFs only
 const pdfFileFilter = (req, file, cb) => {
@@ -212,23 +151,8 @@ const uploadPDF = multer({
   }
 });
 
-// Configure multer for answer uploads (PDFs)
-const answerStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadPath = 'uploads/answers/';
-    // Create directory if it doesn't exist
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    // Create unique filename with timestamp
-    const timestamp = Date.now();
-    const originalName = file.originalname.replace(/\s+/g, '_'); // Replace spaces with underscores
-    cb(null, `answer_${timestamp}_${originalName}`);
-  }
-});
+// Configure multer for answer uploads (memory storage - no physical files)
+const answerStorage = multer.memoryStorage();
 
 // File filter for answer PDFs
 const answerFileFilter = (req, file, cb) => {
@@ -273,19 +197,7 @@ function authenticateToken(req, res, next) {
   });
 }
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDZYyoUJnEjkjueiwM3LQxsvDwlMp3O8hM",
-  authDomain: "eduapp-62956.firebaseapp.com",
-  projectId: "eduapp-62956",
-  storageBucket: "eduapp-62956.firebasestorage.app",
-  messagingSenderId: "265182560724",
-  appId: "1:265182560724:web:9e582460d99b3edf4d1641",
-  measurementId: "G-6LBTTEV23F"
-};
-
-console.log('🔥 Initializing Firebase...');
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
+// Firebase is now initialized in database.js
 
 // Firebase utility functions
 async function writeUserData(userId, userData) {
@@ -484,11 +396,70 @@ async function updateUserPassword(email, newPassword) {
   }
 }
 
+// ===============================
+// FILE UTILITY FUNCTIONS
+// ===============================
+
+// Convert file buffer to base64 string
+function fileToBase64(fileBuffer, mimeType) {
+  return `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+}
+
+// Extract base64 data from data URL
+function base64ToBuffer(dataUrl) {
+  const base64Data = dataUrl.split(',')[1];
+  return Buffer.from(base64Data, 'base64');
+}
+
+// Generate unique file ID
+function generateFileId() {
+  return Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+// Store file data in database
+async function storeFileInDatabase(collectionName, fileData) {
+  try {
+    const docRef = await addDoc(collection(db, collectionName), fileData);
+    console.log(`✅ File stored in ${collectionName} with ID:`, docRef.id);
+    return { success: true, id: docRef.id };
+  } catch (error) {
+    console.error(`❌ Error storing file in ${collectionName}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get file data from database
+async function getFileFromDatabase(collectionName, fileId) {
+  try {
+    const docSnap = await getDoc(doc(db, collectionName, fileId));
+    if (docSnap.exists()) {
+      return { success: true, data: docSnap.data() };
+    } else {
+      return { success: false, message: 'File not found' };
+    }
+  } catch (error) {
+    console.error(`❌ Error getting file from ${collectionName}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Delete file from database
+async function deleteFileFromDatabase(collectionName, fileId) {
+  try {
+    await deleteDoc(doc(db, collectionName, fileId));
+    console.log(`✅ File deleted from ${collectionName}:`, fileId);
+    return { success: true };
+  } catch (error) {
+    console.error(`❌ Error deleting file from ${collectionName}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
 // Profile image utility functions
-async function updateUserProfileImage(userId, imagePath) {
+async function updateUserProfileImage(userId, fileId) {
   try {
     await setDoc(doc(db, 'users', userId), {
-      profileImage: imagePath,
+      profileImageId: fileId,
       updatedAt: new Date()
     }, { merge: true });
     
@@ -513,19 +484,19 @@ async function deleteUserProfileImage(userId) {
   }
 }
 
-// Helper function to delete file from filesystem
-function deleteFileFromSystem(filePath) {
-  try {
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.error('❌ Error deleting file:', error);
-    return false;
-  }
-}
+// [DEPRECATED] Helper function to delete file from filesystem - no longer needed with database storage
+// function deleteFileFromSystem(filePath) {
+//   try {
+//     if (fs.existsSync(filePath)) {
+//       fs.unlinkSync(filePath);
+//       return true;
+//     }
+//     return false;
+//   } catch (error) {
+//     console.error('❌ Error deleting file:', error);
+//     return false;
+//   }
+// }
 
 // OTP verification tracking functions
 async function storeOTPVerification(email, resetToken) {
@@ -1170,39 +1141,54 @@ app.post('/auth/profile-image/upload', authenticateToken, upload.single('profile
     }
 
     const userId = req.user.userId;
-    const imagePath = `/uploads/profile-images/${req.file.filename}`;
+    
+    // Convert file to base64 and store in database
+    const fileData = {
+      userId: userId,
+      fileName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      data: fileToBase64(req.file.buffer, req.file.mimetype),
+      uploadedAt: new Date(),
+      type: 'profile-image'
+    };
 
     // Get current user data to check for existing profile image
     const currentUser = await readUserData(userId);
-    if (currentUser.success && currentUser.data.profileImage) {
-      // Delete old profile image
-      const oldImagePath = path.join(__dirname, '../', currentUser.data.profileImage);
-      deleteFileFromSystem(oldImagePath);
+    if (currentUser.success && currentUser.data.profileImageId) {
+      // Delete old profile image from database
+      await deleteFileFromDatabase('files', currentUser.data.profileImageId);
     }
 
-    // Update user profile image in database
-    const updateResult = await updateUserProfileImage(userId, imagePath);
+    // Store new profile image in database
+    const storeResult = await storeFileInDatabase('files', fileData);
     
-    if (updateResult.success) {
-      res.json({
-        success: true,
-        message: 'Profile image uploaded successfully',
-        profileImage: imagePath,
-        imageUrl: `http://localhost:${PORT}${imagePath}`
-      });
+    if (storeResult.success) {
+      // Update user profile with file ID
+      const updateResult = await updateUserProfileImage(userId, storeResult.id);
+      
+      if (updateResult.success) {
+        res.json({
+          success: true,
+          message: 'Profile image uploaded successfully',
+          profileImageId: storeResult.id,
+          fileName: req.file.originalname
+        });
+      } else {
+        // Delete file if user update failed
+        await deleteFileFromDatabase('files', storeResult.id);
+        res.status(500).json({
+          success: false,
+          error: 'Failed to update user profile'
+        });
+      }
     } else {
-      // Delete uploaded file if database update failed
-      deleteFileFromSystem(req.file.path);
       res.status(500).json({
         success: false,
         error: 'Failed to save profile image'
       });
     }
   } catch (error) {
-    // Delete uploaded file if error occurred
-    if (req.file) {
-      deleteFileFromSystem(req.file.path);
-    }
     console.error('❌ Profile image upload error:', error);
     res.status(500).json({
       success: false,
@@ -1222,39 +1208,48 @@ app.put('/auth/profile-image/update', authenticateToken, upload.single('profileI
     }
 
     const userId = req.user.userId;
-    const imagePath = `/uploads/profile-images/${req.file.filename}`;
 
     // Get current user data to delete old image
     const currentUser = await readUserData(userId);
-    if (currentUser.success && currentUser.data.profileImage) {
-      // Delete old profile image
-      const oldImagePath = path.join(__dirname, '../', currentUser.data.profileImage);
-      deleteFileFromSystem(oldImagePath);
+    if (currentUser.success && currentUser.data.fileId) {
+      // Delete old profile image from database
+      try {
+        await deleteFileFromDatabase('files', currentUser.data.fileId);
+        console.log('✅ Old profile image deleted from database:', currentUser.data.fileId);
+      } catch (fileError) {
+        console.error('❌ Error deleting old profile image:', fileError);
+        // Continue anyway since new image will be uploaded
+      }
     }
 
+    // Store new profile image in database
+    const fileData = await storeFileInDatabase('files', {
+      fileName: req.file.originalname,
+      fileContent: fileToBase64(req.file),
+      mimeType: req.file.mimetype,
+      fileSize: req.file.size,
+      uploaderId: userId,
+      uploadType: 'profile-image',
+      uploadDate: new Date().toISOString()
+    });
+
     // Update user profile image in database
-    const updateResult = await updateUserProfileImage(userId, imagePath);
+    const updateResult = await updateUserProfileImage(userId, fileData.fileId);
     
     if (updateResult.success) {
       res.json({
         success: true,
         message: 'Profile image updated successfully',
-        profileImage: imagePath,
-        imageUrl: `http://localhost:${PORT}${imagePath}`
+        fileId: fileData.fileId,
+        imageUrl: `http://localhost:${PORT}/files/${fileData.fileId}`
       });
     } else {
-      // Delete uploaded file if database update failed
-      deleteFileFromSystem(req.file.path);
       res.status(500).json({
         success: false,
-        error: 'Failed to update profile image'
+        error: updateResult.error
       });
     }
   } catch (error) {
-    // Delete uploaded file if error occurred
-    if (req.file) {
-      deleteFileFromSystem(req.file.path);
-    }
     console.error('❌ Profile image update error:', error);
     res.status(500).json({
       success: false,
@@ -1277,16 +1272,21 @@ app.delete('/auth/profile-image/delete', authenticateToken, async (req, res) => 
       });
     }
 
-    if (!currentUser.data.profileImage) {
+    if (!currentUser.data.fileId) {
       return res.status(400).json({
         success: false,
         error: 'No profile image to delete'
       });
     }
 
-    // Delete image from filesystem
-    const imagePath = path.join(__dirname, '../', currentUser.data.profileImage);
-    const fileDeleted = deleteFileFromSystem(imagePath);
+    // Delete image from database
+    try {
+      await deleteFileFromDatabase('files', currentUser.data.fileId);
+      console.log('✅ Profile image file deleted from database:', currentUser.data.fileId);
+    } catch (fileError) {
+      console.error('❌ Error deleting profile image file:', fileError);
+      // Continue anyway since user record will be updated
+    }
 
     // Remove profile image from database
     const updateResult = await deleteUserProfileImage(userId);
@@ -1294,8 +1294,7 @@ app.delete('/auth/profile-image/delete', authenticateToken, async (req, res) => 
     if (updateResult.success) {
       res.json({
         success: true,
-        message: 'Profile image deleted successfully',
-        fileDeleted: fileDeleted
+        message: 'Profile image deleted successfully'
       });
     } else {
       res.status(500).json({
@@ -1341,6 +1340,78 @@ app.get('/auth/profile-image', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Get profile image error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ===============================
+// FILE SERVING ENDPOINTS
+// ===============================
+
+// Serve file from database
+app.get('/files/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    
+    const fileResult = await getFileFromDatabase('files', fileId);
+    
+    if (!fileResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'File not found'
+      });
+    }
+    
+    const fileData = fileResult.data;
+    const buffer = base64ToBuffer(fileData.data);
+    
+    // Set appropriate headers
+    res.setHeader('Content-Type', fileData.mimeType);
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Content-Disposition', `inline; filename="${fileData.fileName}"`);
+    
+    // Send the file
+    res.send(buffer);
+    
+  } catch (error) {
+    console.error('❌ Error serving file:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Download file from database
+app.get('/files/:fileId/download', async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    
+    const fileResult = await getFileFromDatabase('files', fileId);
+    
+    if (!fileResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'File not found'
+      });
+    }
+    
+    const fileData = fileResult.data;
+    const buffer = base64ToBuffer(fileData.data);
+    
+    // Set download headers
+    res.setHeader('Content-Type', fileData.mimeType);
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileData.fileName}"`);
+    
+    // Send the file
+    res.send(buffer);
+    
+  } catch (error) {
+    console.error('❌ Error downloading file:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
@@ -1504,11 +1575,14 @@ async function deleteNote(noteId, userRole, userId) {
       return { success: false, error: 'Permission denied. Only admin or uploader can delete notes.' };
     }
     
-    // Delete the file from filesystem
-    if (noteData.filePath) {
-      const fullPath = path.join(__dirname, '..', noteData.filePath.replace('/uploads/', 'uploads/'));
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
+    // Delete the file from database
+    if (noteData.fileId) {
+      try {
+        await deleteFileFromDatabase('files', noteData.fileId);
+        console.log('✅ Note file deleted from database:', noteData.fileId);
+      } catch (fileError) {
+        console.error('❌ Error deleting note file from database:', fileError);
+        // Continue anyway since note record will be deleted
       }
     }
     
@@ -1621,11 +1695,14 @@ async function deleteVideo(videoId, userRole, userId) {
       return { success: false, error: 'Permission denied. Only admin or uploader can delete videos.' };
     }
     
-    // Delete the file from filesystem
-    if (videoData.filePath) {
-      const fullPath = path.join(__dirname, '..', videoData.filePath.replace('/uploads/', 'uploads/'));
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
+    // Delete the file from database
+    if (videoData.fileId) {
+      try {
+        await deleteFileFromDatabase('files', videoData.fileId);
+        console.log('✅ Video file deleted from database:', videoData.fileId);
+      } catch (fileError) {
+        console.error('❌ Error deleting video file from database:', fileError);
+        // Continue anyway since video record will be deleted
       }
     }
     
@@ -1888,15 +1965,18 @@ async function deletePaper(paperId) {
     if (paperDoc.exists()) {
       const paperData = paperDoc.data();
       
-      // Delete file from filesystem
-      if (paperData.filePath) {
-        const fullPath = path.join(__dirname, '..', paperData.filePath);
-        if (fs.existsSync(fullPath)) {
-          fs.unlinkSync(fullPath);
+      // Delete file from database if it exists
+      if (paperData.fileId) {
+        try {
+          await deleteFileFromDatabase('files', paperData.fileId);
+          console.log('✅ Paper file deleted from database:', paperData.fileId);
+        } catch (fileError) {
+          console.error('❌ Error deleting paper file from database:', fileError);
+          // Continue anyway since paper record will be deleted
         }
       }
       
-      // Delete from database
+      // Delete paper record from database
       await deleteDoc(doc(db, 'papers', paperId));
       return { success: true, message: 'Paper deleted successfully' };
     } else {
@@ -2549,14 +2629,6 @@ app.post('/papers/:paperId/answers/upload', authenticateToken, uploadAnswer.sing
     // Verify the paper exists
     const paperCheck = await getPaperById(paperId);
     if (!paperCheck.success) {
-      // Delete uploaded file if paper doesn't exist
-      if (req.file) {
-        try {
-          fs.unlinkSync(req.file.path);
-        } catch (err) {
-          console.error('Error deleting file:', err);
-        }
-      }
       return res.status(404).json({
         success: false,
         error: 'Paper not found'
@@ -2572,13 +2644,32 @@ app.post('/papers/:paperId/answers/upload', authenticateToken, uploadAnswer.sing
       });
     }
 
+    // Store file in database
+    const fileData = {
+      userId: userId,
+      fileName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      data: fileToBase64(req.file.buffer, req.file.mimetype),
+      uploadedAt: new Date(),
+      type: 'answer'
+    };
+
+    const fileResult = await storeFileInDatabase('files', fileData);
+    
+    if (!fileResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to store answer file'
+      });
+    }
+
     const answerData = {
       paperId: paperId,
       title: title.trim(),
       description: description ? description.trim() : '',
-      fileName: req.file.filename,
+      fileId: fileResult.id,
       originalFileName: req.file.originalname,
-      filePath: req.file.path.replace(/\\/g, '/'),
       fileSize: req.file.size,
       uploadedBy: userId,
       uploaderName: userData.data.fullName || 'Unknown',
@@ -2597,19 +2688,15 @@ app.post('/papers/:paperId/answers/upload', authenticateToken, uploadAnswer.sing
           paperId: paperId,
           title: answerData.title,
           description: answerData.description,
-          fileName: answerData.fileName,
+          fileId: answerData.fileId,
           originalFileName: answerData.originalFileName,
           uploadedBy: answerData.uploaderName,
           uploadedAt: answerData.uploadedAt
         }
       });
     } else {
-      // Delete uploaded file on database error
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (err) {
-        console.error('Error deleting file:', err);
-      }
+      // Delete file if answer creation failed
+      await deleteFileFromDatabase('files', fileResult.id);
       res.status(500).json({
         success: false,
         error: 'Failed to save answer data'
@@ -2617,16 +2704,6 @@ app.post('/papers/:paperId/answers/upload', authenticateToken, uploadAnswer.sing
     }
   } catch (error) {
     console.error('❌ Error uploading answer:', error);
-    
-    // Clean up uploaded file on error
-    if (req.file) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (err) {
-        console.error('Error deleting file:', err);
-      }
-    }
-
     res.status(500).json({
       success: false,
       error: 'Internal server error'
@@ -2698,31 +2775,33 @@ app.get('/answers/:answerId/download', async (req, res) => {
     }
 
     const answer = result.data;
-    const filePath = path.resolve(answer.filePath);
-
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
+    
+    if (!answer.fileId) {
       return res.status(404).json({
         success: false,
-        error: 'Answer file not found on server'
+        error: 'Answer file not found'
       });
     }
 
+    // Get file from database
+    const fileResult = await getFileFromDatabase('files', answer.fileId);
+    
+    if (!fileResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Answer file not found in database'
+      });
+    }
+
+    const fileData = fileResult.data;
+    const buffer = base64ToBuffer(fileData.data);
+
     // Set appropriate headers
-    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Type', fileData.mimeType);
     res.setHeader('Content-Disposition', `attachment; filename="${answer.originalFileName}"`);
 
-    // Stream the file
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
-
-    fileStream.on('error', (err) => {
-      console.error('❌ Error streaming answer file:', err);
-      res.status(500).json({
-        success: false,
-        error: 'Error downloading answer file'
-      });
-    });
+    // Send the file
+    res.send(buffer);
 
   } catch (error) {
     console.error('❌ Error downloading answer:', error);
@@ -2766,15 +2845,15 @@ app.delete('/answers/:answerId', authenticateToken, async (req, res) => {
     const deleteResult = await deleteAnswer(answerId);
     
     if (deleteResult.success) {
-      // Delete the actual file
-      try {
-        if (fs.existsSync(answer.filePath)) {
-          fs.unlinkSync(answer.filePath);
-          console.log('✅ Answer file deleted from server:', answer.filePath);
+      // Delete the file from database if it exists
+      if (answer.fileId) {
+        try {
+          await deleteFileFromDatabase('files', answer.fileId);
+          console.log('✅ Answer file deleted from database:', answer.fileId);
+        } catch (fileError) {
+          console.error('❌ Error deleting answer file from database:', fileError);
+          // Continue anyway since answer record is deleted
         }
-      } catch (fileError) {
-        console.error('❌ Error deleting answer file:', fileError);
-        // Continue anyway since database record is deleted
       }
 
       res.json({
@@ -3094,11 +3173,29 @@ app.post('/subjects/:subjectId/papers/upload', authenticateToken, uploadPDF.sing
     // Verify subject exists
     const subjectData = await getDoc(doc(db, 'subjects', subjectId));
     if (!subjectData.exists()) {
-      // Delete uploaded file if subject doesn't exist
-      fs.unlinkSync(req.file.path);
       return res.status(404).json({
         success: false,
         error: 'Subject not found'
+      });
+    }
+
+    // Store file in database
+    const fileData = {
+      userId: userId,
+      fileName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      data: fileToBase64(req.file.buffer, req.file.mimetype),
+      uploadedAt: new Date(),
+      type: 'paper'
+    };
+
+    const fileResult = await storeFileInDatabase('files', fileData);
+    
+    if (!fileResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to store paper file'
       });
     }
 
@@ -3108,9 +3205,8 @@ app.post('/subjects/:subjectId/papers/upload', authenticateToken, uploadPDF.sing
       name: name.trim(),
       year: year.trim(),
       title: title ? title.trim() : null,
-      fileName: req.file.filename,
+      fileId: fileResult.id,
       originalName: req.file.originalname,
-      filePath: `/uploads/papers/${req.file.filename}`,
       fileSize: req.file.size,
       uploaderId: userId,
       uploaderEmail: userData.data.email,
@@ -3130,18 +3226,14 @@ app.post('/subjects/:subjectId/papers/upload', authenticateToken, uploadPDF.sing
         }
       });
     } else {
-      // Delete uploaded file if database save failed
-      fs.unlinkSync(req.file.path);
+      // Delete file if paper creation failed
+      await deleteFileFromDatabase('files', fileResult.id);
       res.status(500).json({
         success: false,
         error: result.error
       });
     }
   } catch (error) {
-    // Delete uploaded file if any error occurs
-    if (req.file) {
-      fs.unlinkSync(req.file.path);
-    }
     console.error('❌ Upload paper error:', error);
     res.status(500).json({
       success: false,
@@ -3247,23 +3339,33 @@ app.get('/papers/:paperId/download', async (req, res) => {
     }
 
     const paper = paperResult.data;
-    const filePath = path.join(__dirname, '..', paper.filePath);
-
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
+    
+    if (!paper.fileId) {
       return res.status(404).json({
         success: false,
-        error: 'File not found'
+        error: 'Paper file not found'
       });
     }
 
+    // Get file from database
+    const fileResult = await getFileFromDatabase('files', paper.fileId);
+    
+    if (!fileResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Paper file not found in database'
+      });
+    }
+
+    const fileData = fileResult.data;
+    const buffer = base64ToBuffer(fileData.data);
+
     // Set headers for PDF download
-    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Type', fileData.mimeType);
     res.setHeader('Content-Disposition', `attachment; filename="${paper.originalName}"`);
     
-    // Stream the file
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
+    // Send the file
+    res.send(buffer);
   } catch (error) {
     console.error('❌ Download paper error:', error);
     res.status(500).json({
@@ -3287,23 +3389,33 @@ app.get('/papers/:paperId/view', async (req, res) => {
     }
 
     const paper = paperResult.data;
-    const filePath = path.join(__dirname, '..', paper.filePath);
-
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
+    
+    if (!paper.fileId) {
       return res.status(404).json({
         success: false,
-        error: 'File not found'
+        error: 'Paper file not found'
       });
     }
 
+    // Get file from database
+    const fileResult = await getFileFromDatabase('files', paper.fileId);
+    
+    if (!fileResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Paper file not found in database'
+      });
+    }
+
+    const fileData = fileResult.data;
+    const buffer = base64ToBuffer(fileData.data);
+
     // Set headers for PDF viewing
-    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Type', fileData.mimeType);
     res.setHeader('Content-Disposition', `inline; filename="${paper.originalName}"`);
     
-    // Stream the file
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
+    // Send the file
+    res.send(buffer);
   } catch (error) {
     console.error('❌ View paper error:', error);
     res.status(500).json({
@@ -3521,6 +3633,17 @@ app.post('/subjects/:subjectId/notes/upload', authenticateToken, (req, res, next
       });
     }
 
+    // Store file in database
+    const fileData = await storeFileInDatabase('files', {
+      fileName: req.file.originalname,
+      fileContent: fileToBase64(req.file),
+      mimeType: req.file.mimetype,
+      fileSize: req.file.size,
+      uploaderId: userId,
+      uploadType: 'note',
+      uploadDate: new Date().toISOString()
+    });
+
     // Create note data
     const noteData = {
       subjectId,
@@ -3529,7 +3652,7 @@ app.post('/subjects/:subjectId/notes/upload', authenticateToken, (req, res, next
       lessonName,
       description: description || '',
       fileName: req.file.originalname,
-      filePath: `/uploads/notes/${req.file.filename}`,
+      fileId: fileData.fileId,
       fileSize: req.file.size,
       mimeType: req.file.mimetype,
       uploaderId: userId,
@@ -3554,11 +3677,6 @@ app.post('/subjects/:subjectId/notes/upload', authenticateToken, (req, res, next
         note: noteData
       });
     } else {
-      // Delete uploaded file if database save failed
-      if (req.file) {
-        fs.unlinkSync(req.file.path);
-      }
-      
       res.status(500).json({
         success: false,
         error: result.error
@@ -3566,11 +3684,6 @@ app.post('/subjects/:subjectId/notes/upload', authenticateToken, (req, res, next
     }
   } catch (error) {
     console.error('❌ Note upload error:', error);
-    
-    // Delete uploaded file if error occurred
-    if (req.file) {
-      fs.unlinkSync(req.file.path);
-    }
     
     res.status(500).json({
       success: false,
@@ -3623,21 +3736,33 @@ app.get('/notes/:noteId/download', async (req, res) => {
     }
     
     const noteData = noteDoc.data();
-    const filePath = path.join(__dirname, '..', noteData.filePath.replace('/uploads/', 'uploads/'));
     
-    if (!fs.existsSync(filePath)) {
+    if (!noteData.fileId) {
       return res.status(404).json({
         success: false,
-        error: 'File not found on server'
+        error: 'File not found'
       });
     }
+
+    // Get file from database
+    const fileResult = await getFileFromDatabase('files', noteData.fileId);
+    
+    if (!fileResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'File not found in database'
+      });
+    }
+
+    const fileBuffer = base64ToBuffer(fileResult.data.fileContent);
     
     // Set appropriate headers for download
     res.setHeader('Content-Disposition', `attachment; filename="${noteData.fileName}"`);
     res.setHeader('Content-Type', noteData.mimeType);
+    res.setHeader('Content-Length', fileBuffer.length);
     
     // Send file
-    res.sendFile(filePath);
+    res.send(fileBuffer);
     
   } catch (error) {
     console.error('❌ Download note error:', error);
@@ -3739,6 +3864,17 @@ app.post('/subjects/:subjectId/videos/upload', authenticateToken, (req, res, nex
       });
     }
 
+    // Store file in database
+    const fileData = await storeFileInDatabase('files', {
+      fileName: req.file.originalname,
+      fileContent: fileToBase64(req.file),
+      mimeType: req.file.mimetype,
+      fileSize: req.file.size,
+      uploaderId: userId,
+      uploadType: 'video',
+      uploadDate: new Date().toISOString()
+    });
+
     // Create video data
     const videoData = {
       subjectId,
@@ -3746,7 +3882,7 @@ app.post('/subjects/:subjectId/videos/upload', authenticateToken, (req, res, nex
       title,
       description: description || '',
       fileName: req.file.originalname,
-      filePath: `/uploads/videos/${req.file.filename}`,
+      fileId: fileData.fileId,
       fileSize: req.file.size,
       mimeType: req.file.mimetype,
       uploaderId: userId,
@@ -3764,11 +3900,6 @@ app.post('/subjects/:subjectId/videos/upload', authenticateToken, (req, res, nex
         video: videoData
       });
     } else {
-      // Delete uploaded file if database save failed
-      if (req.file) {
-        fs.unlinkSync(req.file.path);
-      }
-      
       res.status(500).json({
         success: false,
         error: result.error
@@ -3776,11 +3907,6 @@ app.post('/subjects/:subjectId/videos/upload', authenticateToken, (req, res, nex
     }
   } catch (error) {
     console.error('❌ Video upload error:', error);
-    
-    // Delete uploaded file if error occurred
-    if (req.file) {
-      fs.unlinkSync(req.file.path);
-    }
     
     res.status(500).json({
       success: false,
@@ -3891,17 +4017,25 @@ app.get('/videos/:videoId/download', async (req, res) => {
       });
     }
     
-    const filePath = path.join(__dirname, '..', videoData.filePath.replace('/uploads/', 'uploads/'));
-    
-    if (!fs.existsSync(filePath)) {
+    if (!videoData.fileId) {
       return res.status(404).json({
         success: false,
-        error: 'Video file not found on server'
+        error: 'Video file not found'
       });
     }
+
+    // Get file from database
+    const fileResult = await getFileFromDatabase('files', videoData.fileId);
     
-    const stat = fs.statSync(filePath);
-    const fileSize = stat.size;
+    if (!fileResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Video file not found in database'
+      });
+    }
+
+    const fileBuffer = base64ToBuffer(fileResult.data.fileContent);
+    const fileSize = fileBuffer.length;
     const range = req.headers.range;
     
     if (range) {
@@ -3911,7 +4045,7 @@ app.get('/videos/:videoId/download', async (req, res) => {
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
       const chunksize = (end - start) + 1;
       
-      const file = fs.createReadStream(filePath, { start, end });
+      const chunk = fileBuffer.slice(start, end + 1);
       const head = {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
@@ -3920,7 +4054,7 @@ app.get('/videos/:videoId/download', async (req, res) => {
       };
       
       res.writeHead(206, head);
-      file.pipe(res);
+      res.end(chunk);
     } else {
       // Send entire file
       const head = {
@@ -3930,7 +4064,7 @@ app.get('/videos/:videoId/download', async (req, res) => {
       };
       
       res.writeHead(200, head);
-      fs.createReadStream(filePath).pipe(res);
+      res.end(fileBuffer);
     }
     
   } catch (error) {
@@ -7722,6 +7856,12 @@ app.post('/references/:referenceLinkId/messages', authenticateToken, async (req,
     });
   }
 });
+
+// Add Answer Integration
+const { setupAddAnswerIntegration } = require('./addAnswerIntegration');
+
+// Setup Add Answer routes
+setupAddAnswerIntegration(app);
 
 // Export for use in other parts of the application
 global.io = io;
